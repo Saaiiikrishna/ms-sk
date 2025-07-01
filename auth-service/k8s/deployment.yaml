@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: mysillydreams # Assuming a namespace
+  labels:
+    app: auth-service
+    tier: backend
+    component: authentication
+spec:
+  replicas: 2 # Start with 2 replicas, adjust based on load
+  selector:
+    matchLabels:
+      app: auth-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1 # Allow one extra pod during updates
+      maxUnavailable: 0 # Ensure no downtime if possible, or set to 1 if replicas >= 2
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: backend
+        component: authentication
+      annotations:
+        prometheus.io/scrape: "true" # If using Prometheus for metrics
+        prometheus.io/port: "8080"    # Port for Prometheus to scrape (actuator port)
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      serviceAccountName: auth-service-sa # Optional: if using a dedicated K8s service account
+      automountServiceAccountToken: true # Or false if not needed by the application directly
+      securityContext: # Pod-level security context
+        runAsNonRoot: true
+        runAsUser: 1001 # Matches appuser UID from Dockerfile (ensure it's consistent or use fsGroup)
+        runAsGroup: 1001 # Matches appgroup GID from Dockerfile
+        fsGroup: 1001 # Ensures pod's volumes are writable by this group
+        # seccompProfile:
+        #   type: RuntimeDefault # Recommended for security
+      containers:
+      - name: auth-service
+        image: myregistry/auth-service:latest # Replace with your actual image registry and tag
+        imagePullPolicy: IfNotPresent # Or Always for development with :latest tag
+        securityContext: # Container-level security context
+          allowPrivilegeEscalation: false
+          # capabilities:
+          #   drop:
+          #   - ALL
+          # readOnlyRootFilesystem: true # If possible, makes container more secure
+        ports:
+        - name: http
+          containerPort: 8080 # Port application listens on (from application.yml)
+          protocol: TCP
+        # - name: management # If actuator is on a different port
+        #   containerPort: 8081
+        #   protocol: TCP
+        envFrom:
+        - secretRef:
+            name: auth-service-secrets # K8s Secret defined in secret.yaml
+        - configMapRef:
+            name: auth-service-config # K8s ConfigMap defined in configmap.yaml
+        # env: # Additional environment variables can be set directly
+        # - name: JAVA_TOOL_OPTIONS
+        #   value: "-XX:MaxRAMPercentage=80.0" # Example to control JVM heap relative to container memory
+
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness # Spring Boot Actuator readiness endpoint
+            port: http # Refers to the 'http' port name above
+          initialDelaySeconds: 30 # Time to wait before first probe after container starts
+          periodSeconds: 15       # How often to probe
+          timeoutSeconds: 5       # When the probe times out
+          failureThreshold: 3     # How many failures before marking as Unready
+          successThreshold: 1     # How many successes to mark as Ready
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness # Spring Boot Actuator liveness endpoint
+            port: http # Refers to the 'http' port name above
+          initialDelaySeconds: 60 # Longer delay for liveness as app might take time to fully start
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe: # Optional: useful if app has long startup times before liveness can be reliable
+          httpGet:
+            path: /actuator/health/liveness # Can use the same as liveness or a dedicated startup check
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 12 # (periodSeconds * failureThreshold) = total startup timeout (e.g., 12*10 = 120s)
+
+        resources: # Define resource requests and limits
+          requests: # Resources the container is guaranteed to get
+            cpu: "250m" # 0.25 CPU core
+            memory: "512Mi" # 512 Megabytes
+          limits:   # Maximum resources the container can consume
+            cpu: "1" # 1 CPU core
+            memory: "1Gi" # 1 Gigabyte
+        # volumeMounts: # Example if you need to mount persistent storage or specific config files
+        # - name: config-volume
+        #   mountPath: /app/config
+        # - name: tmp-storage # For temporary files if needed
+        #   mountPath: /tmp
+      # volumes: # Define volumes to be mounted
+      # - name: config-volume
+      #   configMap:
+      #     name: auth-service-special-config # Example: mount another configmap as files
+      # - name: tmp-storage
+      #   emptyDir: {}
+---
+# Optional: Create a dedicated Service Account if needed for specific K8s permissions
+# apiVersion: v1
+# kind: ServiceAccount
+# metadata:
+#   name: auth-service-sa
+#   namespace: mysillydreams
+#   labels:
+#     app: auth-service
+# ---
+# Optional: Role and RoleBinding if the SA needs specific permissions within the namespace
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: Role
+# metadata:
+#   namespace: mysillydreams
+#   name: auth-service-role
+# rules:
+# - apiGroups: [""] # "" indicates the core API group
+#   resources: ["pods", "services"]
+#   verbs: ["get", "watch", "list"]
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: RoleBinding
+# metadata:
+#   name: auth-service-rolebinding
+#   namespace: mysillydreams
+# subjects:
+# - kind: ServiceAccount
+#   name: auth-service-sa
+#   namespace: mysillydreams
+# roleRef:
+#   kind: Role
+#   name: auth-service-role
+#   apiGroup: rbac.authorization.k8s.io
