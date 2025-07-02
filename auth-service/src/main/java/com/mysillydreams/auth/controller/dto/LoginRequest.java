@@ -18,8 +18,18 @@ public class LoginRequest {
     @NotBlank(message = "Password cannot be blank")
     private String password;
 
+    @Schema(description = "One-Time Password (OTP) for MFA, required for admins if MFA is enabled.", example = "123456", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    private String otp; // Optional: for MFA
+
     public LoginRequest(String username, String password) {
         this.username = username;
         this.password = password;
+    }
+
+    // Constructor with OTP
+    public LoginRequest(String username, String password, String otp) {
+        this.username = username;
+        this.password = password;
+        this.otp = otp;
     }
 }

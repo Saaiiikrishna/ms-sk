@@ -166,6 +166,19 @@
             <artifactId>springdoc-openapi-ui</artifactId>
             <version>1.7.0</version> <!-- Check for latest version -->
         </dependency>
+
+        <!-- TOTP Library for MFA -->
+        <dependency>
+            <groupId>dev.samstevens.totp</groupId>
+            <artifactId>totp-spring-boot-starter</artifactId>
+            <version>1.7.1</version> <!-- Check for latest version -->
+        </dependency>
+        <!-- ZXing for QR Code generation (often a transitive dependency of totp-spring-boot-starter, but good to be aware) -->
+        <!-- <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.1</version>
+        </dependency> -->
     </dependencies>
 
     <build>

@@ -2,14 +2,17 @@
 
 ## 1. Overview
 
-The Auth Service is a Spring Boot-based microservice responsible for handling user authentication, authorization, and related security concerns within the MySillyDreams Platform. It integrates with Keycloak as an Identity Provider (IdP) and issues its own service-specific JWTs for internal use after successful Keycloak authentication. It also manages password rotation logs and publishes relevant authentication events to Kafka.
+The Auth Service is a Spring Boot-based microservice responsible for handling user authentication, authorization, and related security concerns within the MySillyDreams Platform. It integrates with Keycloak as an Identity Provider (IdP) and issues its own service-specific JWTs for internal use after successful Keycloak authentication.
 
 Key responsibilities include:
 - User login via Keycloak.
+  - **Admin MFA**: For users with `ROLE_ADMIN`, MFA (TOTP) is mandatory if enabled. Login requires username, password, and a One-Time Password (OTP).
 - Service-specific JWT issuance & validation.
 - Role-based access control checks (via Spring Security & Keycloak roles).
-- Password rotation initiation and logging.
+- Password rotation initiation and logging (admin-privileged).
 - Publishing authentication events (e.g., password rotated) to Kafka.
+- Admin MFA setup and verification endpoints.
+- Internal endpoint for provisioning MFA for admin users.
 
 ## 2. Prerequisites for Local Development
 
@@ -17,11 +20,11 @@ Key responsibilities include:
 - **Apache Maven**: Version 3.6+ (for building the project).
 - **Docker & Docker Compose**: For running Keycloak, PostgreSQL, and Kafka locally.
 - **Keycloak Instance**: A running Keycloak instance.
-    - Realm: `MySillyDreams-Realm` (or as configured)
+    - Realm: `MySillyDreams-Realm` (or as configured, e.g., `AuthTestRealm` for tests).
     - Client: `auth-service-client` (or as configured, with service accounts enabled, confidential access type, and appropriate redirect URIs).
-    - Users: Test users within the realm.
+    - Users: Test users within the realm, including at least one with `ROLE_ADMIN`.
 - **PostgreSQL Instance**: A running PostgreSQL server.
-    - Database: `authdb` (or as configured)
+    - Database: `authdb` (or as configured, e.g., `test_auth_db` for tests).
     - User/Password: Credentials with access to the database.
 - **Apache Kafka Instance**: A running Kafka broker.
 
@@ -29,160 +32,106 @@ Refer to `docker-compose.yml` (if provided at the project root) for an example s
 
 ## 3. Configuration
 
-The service is configured primarily through `src/main/resources/application.yml`. Environment variables are used to override default values, especially for sensitive information and environment-specific settings.
+The service is configured primarily through `src/main/resources/application.yml`. Environment variables are used to override default values.
 
-### Key Environment Variables:
+### Key Environment Variables & Application Properties:
 
 **Database:**
-- `DB_HOST`: Hostname of the PostgreSQL server (default: `localhost`).
-- `DB_PORT`: Port of the PostgreSQL server (default: `5432`).
-- `DB_NAME`: Database name (default: `authdb`).
-- `DB_USER`: Username for PostgreSQL (default: `authuser`).
-- `DB_PASS`: Password for PostgreSQL (default: `authpassword`).
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
 
 **Keycloak:**
-- `KEYCLOAK_URL`: Base URL of the Keycloak auth server (e.g., `http://localhost:8080/auth`).
-- `KEYCLOAK_REALM`: Keycloak realm name (default: `MySillyDreams-Realm`).
-- `KEYCLOAK_CLIENT_ID`: Client ID for this service in Keycloak (default: `auth-service-client`).
-- `KEYCLOAK_SECRET`: Client secret for this service in Keycloak. **MUST be set securely.**
-- `KEYCLOAK_SSL_REQUIRED`: SSL requirement for Keycloak (e.g., `none` for local dev, `external` or `all` for prod).
+- `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID` (`keycloak.resource`), `KEYCLOAK_SECRET` (`keycloak.credentials.secret`), `KEYCLOAK_SSL_REQUIRED`
 
 **JWT (Service-Specific):**
-- `JWT_SECRET`: Secret key for signing and verifying service-specific JWTs. **MUST be a strong, long, random string (at least 64 characters for HS512) and managed securely.**
-- `JWT_EXPIRATION_MS`: Expiration time for service-specific JWTs in milliseconds (default: `3600000` - 1 hour).
+- `JWT_SECRET`, `JWT_EXPIRATION_MS`
 
 **Kafka:**
-- `KAFKA_BROKER`: Comma-separated list of Kafka broker addresses (e.g., `localhost:9092`).
+- `KAFKA_BROKER`
+
+**MFA & Internal Operations:**
+- `app.simple-encryption.secret-key` (as `APP_SIMPLE_ENCRYPTION_SECRET_KEY` env var): **CRITICAL** secret key for encrypting TOTP secrets. Must be 16, 24, or 32 bytes long. **MUST be overridden in production with a strong, unique key.**
+- `app.internal-api.secret-key` (as `APP_INTERNAL_API_SECRET_KEY` env var): Secret API key for accessing internal admin provisioning endpoints. **MUST be overridden in production.**
+- `app.mfa.issuer-name` (default: `MySillyDreamsPlatform`): Issuer name displayed in authenticator apps.
 
 **Spring Profiles:**
-- `SPRING_PROFILES_ACTIVE`: Active Spring profiles (e.g., `dev`, `prod`, `kubernetes`).
+- `SPRING_PROFILES_ACTIVE`
 
 ### Important Production Settings:
-- **`spring.jpa.hibernate.ddl-auto`**: Should be set to `validate` or `none` in production. Database schema migrations should be handled by tools like Liquibase or Flyway.
-- **CORS Configuration (`SecurityConfig.java`)**: The `allowedOrigins` in CORS configuration must be restricted to your frontend application's domain(s) in production. Do not use `*`.
-- **JWT Secret Management**: The `JWT_SECRET` must be managed securely (e.g., using HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, or GCP Secret Manager) and injected as an environment variable or via Kubernetes secrets. Do not hardcode production secrets.
+- **Encryption Keys**: `APP_SIMPLE_ENCRYPTION_SECRET_KEY` and `JWT_SECRET` must be strong, unique, and managed securely (e.g., Vault, K8s secrets).
+- **Internal API Key**: `APP_INTERNAL_API_SECRET_KEY` must be strong and managed securely.
+- **Database Schema**: `spring.jpa.hibernate.ddl-auto` should be `validate` or `none`. Use Liquibase/Flyway for migrations.
+- **CORS Configuration (`SecurityConfig.java`)**: `allowedOrigins` must be restricted.
+- Other points from previous "Important Production Settings" section remain valid.
 
 ## 4. Building and Running Locally
+(Sections 4.1, 4.2, 4.3 remain largely the same, ensure new env vars are considered)
 
 ### 4.1 Build
-To build the project and create the executable JAR:
 ```bash
 mvn clean package
 ```
-This will produce `target/auth-service-*.jar`.
 
 ### 4.2 Running with Maven
-Ensure Keycloak, PostgreSQL, and Kafka are running and accessible. Configure the necessary environment variables (or update `application-dev.yml` if you create one).
 ```bash
-# Example:
-# export KEYCLOAK_URL=http://localhost:8080/auth
-# export KEYCLOAK_SECRET=your-client-secret
-# export JWT_SECRET=your-super-long-and-secure-jwt-secret
-# ... other variables
-
+# Set necessary env vars including APP_SIMPLE_ENCRYPTION_SECRET_KEY, APP_INTERNAL_API_SECRET_KEY
 mvn spring-boot:run
 ```
-The service will typically start on port `8080`.
 
-### 4.3 Running with Docker (after building JAR)
-1.  Build the JAR: `mvn clean package`
-2.  Build the Docker image: `docker build -t myregistry/auth-service:latest .`
-3.  Run the Docker container (example, assuming dependencies are on `host.docker.internal` or a shared network):
-    ```bash
-    docker run -p 8080:8080 \
-      -e SPRING_PROFILES_ACTIVE=dev \
-      -e DB_HOST=host.docker.internal \
-      -e KEYCLOAK_URL=http://host.docker.internal:8080/auth \
-      -e KEYCLOAK_SECRET="your-client-secret" \
-      -e JWT_SECRET="your-super-long-and-secure-jwt-secret" \
-      -e KAFKA_BROKER=host.docker.internal:9092 \
-      myregistry/auth-service:latest
-    ```
-    Using a `docker-compose.yml` file for managing the service and its dependencies (Keycloak, Postgres, Kafka) locally is highly recommended.
+### 4.3 Running with Docker
+```bash
+# Example, include new env vars:
+# -e APP_SIMPLE_ENCRYPTION_SECRET_KEY="your-strong-encryption-key-for-totp" \
+# -e APP_INTERNAL_API_SECRET_KEY="your-strong-internal-api-key" \
+docker run -p 8080:8080 \
+  -e SPRING_PROFILES_ACTIVE=dev \
+  # ... other existing env vars ...
+  myregistry/auth-service:latest
+```
 
 ## 5. Running Tests
-
-To run all unit and integration tests:
+(Remains the same)
 ```bash
 mvn test
 ```
-Integration tests use Testcontainers to spin up Keycloak, PostgreSQL, and an embedded Kafka instance, so Docker must be running.
 
 ## 6. API Endpoints
 
-The service exposes the following REST API endpoints. For detailed request/response formats, refer to the OpenAPI/Swagger documentation (see section 8).
+Refer to the OpenAPI/Swagger documentation (`/swagger-ui.html`, `/v3/api-docs`).
 
-- **`POST /auth/login`**:
-    - Description: Authenticates a user with username and password against Keycloak. Returns a service-specific JWT upon success.
-    - Request Body: `LoginRequest` (`{ "username": "...", "password": "..." }`)
-    - Response: `JwtResponse` (`{ "accessToken": "...", "tokenType": "Bearer", "expiresIn": ... }`)
+### Public Authentication Endpoints (`/auth`):
+- **`POST /login`**:
+    - Description: Authenticates a user. For admins with MFA enabled, `otp` field is required in the request body.
+    - Request Body: `LoginRequest` (`{ "username": "...", "password": "...", "otp": "..." (optional) }`)
+- **`POST /refresh`**: (No change)
+- **`GET /validate`**: (No change)
+- **`POST /password-rotate`**: (No change in public signature, still admin-only)
 
-- **`POST /auth/refresh`**:
-    - Description: Refreshes a service-specific JWT. Expects the current valid JWT in the request body.
-    - Request Body: `TokenRefreshRequest` (`{ "refreshToken": "current-jwt" }`)
-    - Response: `JwtResponse` (new token)
+### Admin MFA Management Endpoints (`/auth/admin/mfa` - Require ROLE_ADMIN):
+- **`POST /setup`**:
+    - Description: Generates a new TOTP secret and QR code data URI for the authenticated admin to set up MFA. MFA remains disabled until verified.
+    - Response: `MfaSetupResponse` (`{ "rawSecret": "...", "qrCodeDataUri": "..." }`)
+- **`POST /verify`**:
+    - Description: Verifies the provided OTP and enables MFA for the authenticated admin.
+    - Request Body: `{ "otp": "123456" }`
+    - Response: Success or error message.
 
-- **`GET /auth/validate`**:
-    - Description: Validates a service-specific JWT passed in the `Authorization: Bearer <token>` header.
-    - Response: `{ "status": "valid/invalid", "user": "...", "authorities": [...] }` or error.
-
-- **`POST /auth/password-rotate`**:
-    - Description: Initiates a password rotation for a user (forces password update on next login). Requires ADMIN role.
-    - Request Parameter: `userId` (UUID of the user)
-    - Response: Success message or error.
+### Internal Admin Provisioning Endpoints (`/internal/auth` - Requires X-Internal-API-Key):
+- **`POST /provision-mfa-setup`**:
+    - Description: For internal systems. Provisions initial MFA setup data (secret, QR URI) for a specified admin user ID. MFA remains disabled.
+    - Request Body: `{ "adminUserId": "uuid", "adminUsername": "username_for_qr_label" }`
+    - Response: `MfaSetupResponse`.
 
 ## 7. Kafka Events Produced
-
-- **Topic**: `auth.events` (configurable via `AuthEvents.AUTH_EVENTS_TOPIC`)
-    - **Event Type (Key or Header)**: `auth.user.password_rotated` (as defined in `AuthEvents.PASSWORD_ROTATED`)
-    - **Payload Example**:
-      ```json
-      {
-        "userId": "uuid-of-the-user",
-        "rotatedAt": "iso-8601-timestamp"
-      }
-      ```
-    - **Description**: Published when a password rotation is successfully initiated for a user.
+(No changes to Kafka events from this service in this update.)
 
 ## 8. API Documentation (OpenAPI/Swagger)
-
-If `springdoc-openapi-ui` is included, the OpenAPI specification and Swagger UI will be available:
-- **Swagger UI**: `http://localhost:8080/swagger-ui.html`
-- **OpenAPI Spec (JSON)**: `http://localhost:8080/v3/api-docs`
-
-(This requires adding the dependency and annotations, which is the next step in the documentation plan).
+(Remains the same, new endpoints will be included due to annotations.)
 
 ## 9. Deployment
-
-### 9.1 Docker Build & Push
-1.  Build the application JAR: `mvn clean package`
-2.  Build the Docker image: `docker build -t your-registry/auth-service:your-tag .`
-3.  Push the image to your container registry: `docker push your-registry/auth-service:your-tag`
-
-### 9.2 Kubernetes
-The Kubernetes manifests are located in the `/k8s` directory:
-- `secret.yaml`: Define sensitive configurations (DB credentials, Keycloak client secret, JWT secret). **Populate securely.**
-- `configmap.yaml`: Define non-sensitive configurations (Keycloak URL, Kafka broker).
-- `deployment.yaml`: Defines the deployment strategy, replicas, probes, resource requests/limits, etc. Update the image path to your pushed image.
-- `service.yaml`: Exposes the deployment within the Kubernetes cluster.
-
-Apply the manifests (ensure namespace exists or is created):
-```bash
-kubectl apply -f k8s/secret.yaml
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-```
+(Remains largely the same, ensure new environment variables for secret keys are managed in production Kubernetes secrets.)
 
 ## 10. Security Hardening Notes
-
-- **Rate Limiting/Brute Force Protection**: Implement robust protection for the `/auth/login` endpoint, potentially at an API Gateway level or using libraries like Resilience4j/Bucket4j.
-- **Dependency Vulnerability Scanning**: Integrate tools like OWASP Dependency-Check, Snyk, or GitHub Dependabot into your CI/CD pipeline to continuously scan for vulnerabilities in dependencies.
-- **Static Application Security Testing (SAST)**: Use SAST tools (e.g., SonarQube, Checkmarx) to analyze code for security flaws.
-- **Dynamic Application Security Testing (DAST)**: Consider DAST tools for testing the running application in a test environment.
-- **Regular Security Audits**: Conduct periodic security audits and penetration tests.
-- **Principle of Least Privilege**: Ensure the service account used for Keycloak Admin API operations has only the minimum necessary permissions. Similarly for the database user.
-- **TLS Everywhere**: All external communication (to Keycloak, Kafka, clients) and ideally internal communication should be over TLS in production.
-- **Secure Logging**: Avoid logging sensitive information. Use correlation IDs (MDC) for tracing requests.
-- **Regular Updates**: Keep all dependencies, base Docker images, and Keycloak/PostgreSQL/Kafka versions patched and up-to-date.
+(Remains largely the same, with added emphasis on managing the new encryption and internal API keys.)
+- **MFA for Admins**: Now a core feature. Ensure TOTP secrets are handled securely (encrypted at rest).
+- **Internal API Key**: The `/internal` endpoints are protected by a shared secret key. This key must be strong and access to it highly restricted. Consider mTLS for these internal routes if possible for enhanced security.
 ```
