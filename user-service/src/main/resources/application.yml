@@ -94,6 +94,12 @@ kyc:
     start: ${KYC_TOPIC_START:kyc.vendor.start.v1}
     documentUploaded: ${KYC_TOPIC_DOCUMENT_UPLOADED:kyc.vendor.document.uploaded.v1}
 
+# Inventory Kafka Topics
+inventory:
+  topic:
+    itemCreated: ${INVENTORY_TOPIC_ITEM_CREATED:inventory.item.created.v1}
+    stockAdjusted: ${INVENTORY_TOPIC_STOCK_ADJUSTED:inventory.stock.adjusted.v1}
+
 
 # --- Profile-specific configurations ---
 ---

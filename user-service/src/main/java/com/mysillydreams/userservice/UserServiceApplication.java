@@ -7,9 +7,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing; // For @CreationTimestamp etc.
+import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity; // Added
 
 @SpringBootApplication
 @EnableJpaAuditing // To enable @CreationTimestamp and @UpdateTimestamp in entities
+@EnableGlobalMethodSecurity(prePostEnabled = true, jsr250Enabled = true) // Enable method security
 public class UserServiceApplication {
 
     public static void main(String[] args) {

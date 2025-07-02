@@ -19,6 +19,12 @@ public class KafkaConfig {
     @Value("${kyc.topic.documentUploaded:kyc.vendor.document.uploaded.v1}")
     private String kycDocumentUploadedTopicName;
 
+    @Value("${inventory.topic.itemCreated:inventory.item.created.v1}")
+    private String inventoryItemCreatedTopicName;
+
+    @Value("${inventory.topic.stockAdjusted:inventory.stock.adjusted.v1}")
+    private String inventoryStockAdjustedTopicName;
+
     // Default number of partitions and replicas for auto-created topics
     // These should be configured based on production needs if topic creation is enabled.
     private static final int DEFAULT_PARTITIONS = 3;
@@ -41,6 +47,24 @@ public class KafkaConfig {
                 .partitions(DEFAULT_PARTITIONS)
                 .replicas(DEFAULT_REPLICAS)
                 // .config(TopicConfig.RETENTION_MS_CONFIG, "" + Duration.ofDays(7).toMillis()) // Example: set retention
+                .build();
+    }
+
+    @Bean
+    public NewTopic inventoryItemCreatedTopic() {
+        logger.info("Declaring Kafka topic bean: {}", inventoryItemCreatedTopicName);
+        return TopicBuilder.name(inventoryItemCreatedTopicName)
+                .partitions(DEFAULT_PARTITIONS)
+                .replicas(DEFAULT_REPLICAS)
+                .build();
+    }
+
+    @Bean
+    public NewTopic inventoryStockAdjustedTopic() {
+        logger.info("Declaring Kafka topic bean: {}", inventoryStockAdjustedTopicName);
+        return TopicBuilder.name(inventoryStockAdjustedTopicName)
+                .partitions(DEFAULT_PARTITIONS)
+                .replicas(DEFAULT_REPLICAS)
                 .build();
     }
 

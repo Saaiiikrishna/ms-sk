@@ -2,18 +2,25 @@
 
 ## 1. Overview
 
-The User Service is a Spring Boot-based microservice responsible for managing user profiles, including sensitive Personal Identifiable Information (PII), and for handling vendor onboarding processes within the MySillyDreams Platform.
+The User Service is a Spring Boot-based microservice responsible for managing user profiles (including PII), vendor onboarding, and inventory management functionalities within the MySillyDreams Platform.
 
 **Core User Functionality:**
 - CRUD operations on user profiles.
 - Field-level encryption for sensitive PII (e.g., name, email, phone, DOB) using HashiCorp Vault's Transit Secrets Engine.
 - Management of user addresses, payment information (tokenized), and login sessions.
+- User roles management (e.g., `ROLE_VENDOR_USER`, `ROLE_INVENTORY_USER`).
 
 **Vendor Onboarding Module:**
-- Registration of new vendors, linking them to existing user accounts.
+- Registration of new vendors, linking them to existing user accounts (assigns `ROLE_VENDOR_USER`).
 - Management of vendor profiles and their KYC (Know Your Customer) status.
 - Handling of KYC document uploads via S3 pre-signed URLs.
 - Integration with a KYC orchestrator by publishing events to Apache Kafka.
+
+**Inventory Management Module:**
+- Onboarding of users as inventory managers (assigns `ROLE_INVENTORY_USER` and creates an `InventoryProfile`).
+- CRUD operations for inventory items (SKU, name, description, quantity, reorder level).
+- Stock adjustment functionalities (receive, issue, adjust) with transaction logging.
+- Kafka event publishing for inventory item creation and stock adjustments.
 
 ## 2. Prerequisites for Local Development
 
@@ -55,6 +62,8 @@ The service is configured via `src/main/resources/bootstrap.yml` (for Vault boot
 - `AWS_S3_ENDPOINT_OVERRIDE` (Optional: For LocalStack/MinIO, e.g., `http://localhost:4566`).
 - `KYC_TOPIC_START` (Kafka topic for starting KYC workflow, default: `kyc.vendor.start.v1`).
 - `KYC_TOPIC_DOCUMENT_UPLOADED` (Kafka topic for document uploaded event, default: `kyc.vendor.document.uploaded.v1`).
+- `INVENTORY_TOPIC_ITEM_CREATED` (Kafka topic for new inventory items, default: `inventory.item.created.v1`).
+- `INVENTORY_TOPIC_STOCK_ADJUSTED` (Kafka topic for stock adjustments, default: `inventory.stock.adjusted.v1`).
 
 ### Important Production Settings:
 - **Database Schema**: `spring.jpa.hibernate.ddl-auto` should be `validate` or `none`. Use Liquibase/Flyway for migrations.
@@ -106,6 +115,13 @@ Refer to the OpenAPI/Swagger documentation for detailed request/response formats
 - **`GET /profile`**: Get current vendor's profile. Requires `X-User-Id` header.
 - **`POST /documents/upload-url`**: Generate a pre-signed URL for uploading a KYC document. Requires `X-User-Id` header and `docType` query parameter.
 
+### Inventory Management Endpoints (`/inventory-onboarding`, `/inventory`):
+- **`POST /inventory-onboarding/register`**: Register an existing user as an inventory user. Requires `X-User-Id` header.
+- **`GET /inventory-onboarding/profile`**: Get current inventory user's profile. Requires `X-User-Id` header.
+- **`POST /inventory/items`**: Add a new inventory item. Requires `X-Inventory-Profile-Id` header.
+- **`GET /inventory/items`**: List inventory items for a profile. Requires `X-Inventory-Profile-Id` header.
+- **`POST /inventory/items/{itemId}/adjust`**: Adjust stock for an inventory item.
+
 ## 7. Kafka Events
 
 ### Events Produced by User Service:
@@ -119,16 +135,29 @@ Refer to the OpenAPI/Swagger documentation for detailed request/response formats
     - **Event Type**: `KycDocumentUploaded` (in payload)
     - **Key**: Document ID (UUID string)
     - **Payload Example**: `{"documentId": "...", "vendorProfileId": "...", "s3Key": "...", "docType": "...", "checksum": "...", "uploadedAt": "...", "eventType": "KycDocumentUploaded"}`
-    - **Description**: Published by `DocumentService` after an S3 upload callback is processed.
+    - **Description**: Published by `DocumentService` after an S3 upload callback is processed for a vendor document.
+
+- **Topic**: `inventory.item.created.v1` (configurable via `inventory.topic.itemCreated`)
+    - **Event Type**: `InventoryItemCreated` (in payload)
+    - **Key**: Item ID (UUID string)
+    - **Payload Example**: `{"itemId": "...", "sku": "...", "name": "...", "inventoryProfileId": "...", "quantityOnHand": ..., "reorderLevel": ..., "createdAt": "...", "eventType": "InventoryItemCreated"}`
+    - **Description**: Published by `InventoryKafkaClient` when a new inventory item is created.
+
+- **Topic**: `inventory.stock.adjusted.v1` (configurable via `inventory.topic.stockAdjusted`)
+    - **Event Type**: `InventoryStockAdjusted` (in payload)
+    _ **Key**: Item ID (UUID string)
+    - **Payload Example**: `{"itemId": "...", "sku": "...", "transactionId": "...", "transactionType": "...", "quantityAdjusted": ..., "newQuantityOnHand": ..., "transactionTimestamp": "...", "inventoryProfileId": "...", "eventType": "InventoryStockAdjusted"}`
+    - **Description**: Published by `InventoryKafkaClient` when an inventory item's stock is adjusted.
 
 *(TODO: Add `user.created`, `user.updated` events if/when implemented).*
 
 ## 8. Security & Hardening Notes
 
-This service handles highly sensitive PII and vendor data. Refer to the "User-Service Hardening Guide" for comprehensive security measures. Key highlights implemented or to be strictly followed:
-- **Field-Level Encryption**: Sensitive fields in `UserEntity`, `AddressEntity`, `PaymentInfoEntity` are encrypted using Vault Transit. `VendorProfile.legalName` encryption should be evaluated.
+This service handles highly sensitive PII, vendor, and inventory data. Refer to the "User-Service Hardening Guide" for comprehensive security measures. Key highlights implemented or to be strictly followed:
+- **Field-Level Encryption**: Sensitive fields in `UserEntity`, `AddressEntity`, `PaymentInfoEntity` are encrypted using Vault Transit. `VendorProfile.legalName` and `InventoryItem.name`/`description` encryption should be evaluated based on data sensitivity.
 - **Secrets Management**: All secrets (DB credentials, Vault tokens, API keys) are managed via HashiCorp Vault.
 - **Input Validation**: Applied on all DTOs and controller parameters.
+- **Authorization**: Endpoints use headers like `X-User-Id` and `X-Inventory-Profile-Id`. Robust server-side validation is required to ensure the authenticated principal (from JWT, passed by API Gateway) is authorized to act on behalf of these identifiers and possesses necessary roles (e.g., `ROLE_VENDOR_USER`, `ROLE_INVENTORY_USER`). Basic `@PreAuthorize("isAuthenticated()")` is a starting point; more fine-grained checks are noted as TODOs.
 - **Secure Dependencies**: Regularly scan dependencies (e.g., OWASP Dependency-Check, Snyk).
 - **SAST/DAST**: Integrate into CI/CD.
 - **Container Security**: Use minimal base images (Dockerfile provided), run as non-root, scan images (Trivy/Clair).
