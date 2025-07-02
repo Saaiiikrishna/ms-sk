@@ -3,6 +3,7 @@ package com.mysillydreams.auth.controller;
 import com.mysillydreams.auth.controller.dto.JwtResponse;
 import com.mysillydreams.auth.controller.dto.LoginRequest;
 import com.mysillydreams.auth.controller.dto.TokenRefreshRequest;
+import com.mysillydreams.auth.service.AuthService; // Added
 import com.mysillydreams.auth.service.PasswordRotationService;
 import com.mysillydreams.auth.util.JwtTokenProvider;
 
@@ -22,8 +23,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+// AuthenticationManager no longer directly used here
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.annotation.Validated;
@@ -43,45 +43,48 @@ public class AuthController {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
-    private final AuthenticationManager authenticationManager;
-    private final JwtTokenProvider jwtTokenProvider;
+    // private final AuthenticationManager authenticationManager; // Moved to AuthService
+    private final JwtTokenProvider jwtTokenProvider; // Still needed for /refresh and /validate
     private final PasswordRotationService passwordRotationService;
+    private final AuthService authService; // Added AuthService
 
     @Autowired
-    public AuthController(AuthenticationManager authenticationManager,
+    public AuthController(AuthService authService, // Injected AuthService
                           JwtTokenProvider jwtTokenProvider,
                           PasswordRotationService passwordRotationService) {
-        this.authenticationManager = authenticationManager;
+        this.authService = authService;
         this.jwtTokenProvider = jwtTokenProvider;
         this.passwordRotationService = passwordRotationService;
     }
 
-    @Operation(summary = "User Login", description = "Authenticates a user with username and password against Keycloak and returns a service-specific JWT.")
+    @Operation(summary = "User Login", description = "Authenticates a user with username and password against Keycloak and returns a service-specific JWT. For admins with MFA enabled, an OTP must also be provided.")
     @ApiResponses(value = {
             @ApiResponse(responseCode = "200", description = "Login successful, JWT returned",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = JwtResponse.class))),
             @ApiResponse(responseCode = "400", description = "Invalid request payload (e.g., missing username/password)",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = Map.class))),
-            @ApiResponse(responseCode = "401", description = "Invalid credentials or authentication failed",
+            @ApiResponse(responseCode = "401", description = "Invalid credentials, authentication failed, or MFA OTP required/failed for admins",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = Map.class)))
     })
     @PostMapping("/login")
     public ResponseEntity<?> login(
-            @Parameter(description = "User credentials for login", required = true, schema = @Schema(implementation = LoginRequest.class)) @Valid @RequestBody LoginRequest loginRequest,
-            HttpServletRequest request) {
-        // TODO: SECURITY - Implement rate limiting / brute force protection for login endpoint.
+            @Parameter(description = "User credentials for login, including optional OTP for MFA-enabled admins", required = true, schema = @Schema(implementation = LoginRequest.class))
+            @Valid @RequestBody LoginRequest loginRequest,
+            HttpServletRequest request) { // Retained for IP logging, though GlobalExceptionHandler could also get it
+        // TODO: SECURITY - Implement rate limiting / brute force protection for login endpoint (ideally before hitting this, e.g., gateway or filter).
         try {
-            logger.info("Login attempt for user: {} from IP: {}", loginRequest.getUsername(), request.getRemoteAddr());
-            Authentication authentication = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(loginRequest.getUsername(), loginRequest.getPassword())
-            );
-            String jwt = jwtTokenProvider.generateToken(authentication);
-            Long expiresIn = jwtTokenProvider.getExpiryDateFromToken(jwt) - System.currentTimeMillis();
-            logger.info("User {} logged in successfully from IP: {}. JWT generated.", loginRequest.getUsername(), request.getRemoteAddr());
-            return ResponseEntity.ok(new JwtResponse(jwt, expiresIn));
+            // IP logging can be done by a filter or WebRequest in GlobalExceptionHandler if preferred for centralization
+            logger.info("Login request received for user: {} from IP: {}", loginRequest.getUsername(), request.getRemoteAddr());
+            JwtResponse jwtResponse = authService.login(loginRequest); // Delegate to AuthService
+            logger.info("User {} login processed successfully from IP: {}.", loginRequest.getUsername(), request.getRemoteAddr());
+            return ResponseEntity.ok(jwtResponse);
         } catch (Exception e) {
-            logger.error("Unexpected error during login for user {} from IP {}: {}", loginRequest.getUsername(), request.getRemoteAddr(), e.getMessage(), e);
-             throw e;
+            // Specific exceptions like BadCredentialsException, MfaAuthenticationRequiredException
+            // will be thrown by AuthService and should be handled by GlobalExceptionHandler.
+            // This catch block is for any other unexpected exceptions during controller processing itself.
+            logger.error("Unexpected error during login processing for user {} from IP {}: {}",
+                         loginRequest.getUsername(), request.getRemoteAddr(), e.getMessage(), e);
+            throw e; // Re-throw to be caught by GlobalExceptionHandler
         }
     }
 
@@ -162,9 +165,16 @@ public class AuthController {
     @PreAuthorize("hasRole('ROLE_ADMIN')")
     public ResponseEntity<?> rotatePassword(
             @Parameter(description = "UUID of the user whose password is to be rotated", required = true) @RequestParam @NotNull UUID userId) {
-        logger.info("Password rotation request for user ID: {} by admin: {}", userId, SecurityContextHolder.getContext().getAuthentication().getName());
+        // Assuming ROLE_ADMIN is checked by PreAuthorize, get current admin for logging
+        String adminPerformingAction = "unknown_admin";
+        Authentication currentAuth = SecurityContextHolder.getContext().getAuthentication();
+        if (currentAuth != null) {
+            adminPerformingAction = currentAuth.getName();
+        }
+        logger.info("Password rotation request for user ID: {} by admin: {}", userId, adminPerformingAction);
         passwordRotationService.rotatePassword(userId);
         logger.info("Password rotation initiated successfully for user ID: {}", userId);
         return ResponseEntity.ok(Map.of("message", "Password rotation process initiated for user " + userId));
     }
 }
+```
