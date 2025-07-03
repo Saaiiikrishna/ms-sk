@@ -2,13 +2,13 @@
 
 ## 1. Overview
 
-The User Service is a Spring Boot-based microservice responsible for managing user profiles (including PII), vendor onboarding, inventory management, and administrative ("god mode") functionalities within the MySillyDreams Platform.
+The User Service is a Spring Boot-based microservice responsible for managing user profiles (including PII), vendor onboarding, inventory management, delivery user operations, support ticketing, and administrative ("god mode") functionalities within the MySillyDreams Platform.
 
 **Core User Functionality:**
 - CRUD operations on user profiles.
 - Field-level encryption for sensitive PII (e.g., name, email, phone, DOB) using HashiCorp Vault's Transit Secrets Engine.
 - Management of user addresses, payment information (tokenized), and login sessions.
-- User roles management (e.g., `ROLE_USER`, `ROLE_VENDOR_USER`, `ROLE_INVENTORY_USER`, `ROLE_ADMIN`).
+- User roles management (e.g., `ROLE_USER`, `ROLE_VENDOR_USER`, `ROLE_INVENTORY_USER`, `ROLE_DELIVERY_USER`, `ROLE_SUPPORT_USER`, `ROLE_ADMIN`).
 
 **Vendor Onboarding Module:**
 - Registration of new vendors, linking them to existing user accounts (assigns `ROLE_VENDOR_USER`).
@@ -22,10 +22,22 @@ The User Service is a Spring Boot-based microservice responsible for managing us
 - Stock adjustment functionalities (receive, issue, adjust) with transaction logging.
 - Kafka event publishing for inventory item creation and stock adjustments.
 
+**Delivery-User Module:**
+- Onboarding of users as delivery personnel (assigns `ROLE_DELIVERY_USER` and creates `DeliveryProfile`).
+- Management of order assignments for delivery users.
+- Tracking delivery lifecycle events (arrival, photo upload, OTP verification, completion).
+- S3 integration for storing delivery photos.
+- Kafka event publishing for order assignments and delivery status changes.
+
+**Support-User Module:**
+- Onboarding of users as support agents (assigns `ROLE_SUPPORT_USER` and creates `SupportProfile`).
+- Management of customer support tickets (creation, status updates, assignment).
+- Handling of messages within support tickets, including optional attachment metadata.
+- Kafka event publishing for ticket creation and updates.
+
 **Admin ("God Mode") Functionality:**
 - Dedicated `/admin/*` API endpoints for privileged operations, accessible only by users with `ROLE_ADMIN`.
-- Ability for admins to list all users, vendor profiles, inventory profiles.
-- Conceptual ability to manage (get, update, delete) any user or entity (further endpoint implementation needed).
+- Ability for admins to list all users, vendor profiles, inventory profiles, etc.
 - Secure internal endpoint for provisioning User-Service local profiles for admin users.
 - Audit logging for actions performed by administrators.
 
@@ -34,20 +46,14 @@ The User Service is a Spring Boot-based microservice responsible for managing us
 - **Java JDK**: Version 17 or higher.
 - **Apache Maven**: Version 3.6+ (for building the project).
 - **Docker & Docker Compose**: For running HashiCorp Vault, PostgreSQL, Apache Kafka, and an S3-compatible service (e.g., LocalStack) locally.
-- **HashiCorp Vault Instance**:
-    - Transit Secrets Engine enabled.
-    - A transit key named `user-service-key` (or as configured via `spring.cloud.vault.transit.default-key-name`).
-    - AppRole authentication configured, with `VAULT_ROLE_ID` and `VAULT_SECRET_ID` available as environment variables.
-    - KV Secrets Engine (v2 recommended, at path `secret/`) to store database credentials if not using dynamic DB secrets.
-- **PostgreSQL Instance**:
-    - Database created (e.g., `usersdb_default`).
+- **HashiCorp Vault Instance**: (Details as before)
+- **PostgreSQL Instance**: (Details as before)
 - **Apache Kafka Instance**.
-- **S3-Compatible Storage** (e.g., LocalStack, MinIO, or AWS S3 for testing against real S3):
-    - Bucket created (e.g., `mysillydreams-vendor-docs`).
+- **S3-Compatible Storage**: (Details as before, bucket name `mysillydreams-vendor-docs` or `test-bucket` for tests can be shared or specific per module via config).
 
 ## 3. Configuration
 
-The service is configured via `src/main/resources/bootstrap.yml` (for Vault bootstrap) and `src/main/resources/application.yml`. Environment variables override defaults.
+The service is configured via `src/main/resources/bootstrap.yml` and `src/main/resources/application.yml`.
 
 ### Key Environment Variables & Application Properties:
 (Previous keys remain)
@@ -57,15 +63,19 @@ The service is configured via `src/main/resources/bootstrap.yml` (for Vault boot
 - `VENDOR_DOCS_S3_BUCKET`, `AWS_S3_REGION`, `AWS_S3_ENDPOINT_OVERRIDE`
 - `KYC_TOPIC_START`, `KYC_TOPIC_DOCUMENT_UPLOADED`
 - `INVENTORY_TOPIC_ITEM_CREATED`, `INVENTORY_TOPIC_STOCK_ADJUSTED`
-- **New/Updated for Admin Features:**
-  - `app.internal-api.secret-key` (as `APP_INTERNAL_API_SECRET_KEY_USER_SVC` env var, if different from Auth-Service): Secret API key for User-Service internal admin provisioning endpoints. **MUST be overridden in production.**
+- `APP_INTERNAL_API_SECRET_KEY_USER_SVC`
+- **New for Delivery & Support:**
+  - `DELIVERY_PHOTO_S3_BUCKET` (S3 bucket for delivery photos, can default to `VENDOR_DOCS_S3_BUCKET`).
+  - `DELIVERY_TOPIC_ORDER_ASSIGNED` (default: `order.assigned.v1`)
+  - `DELIVERY_TOPIC_STATUS_CHANGED` (default: `delivery.status.changed.v1`)
+  - `SUPPORT_TOPIC_TICKET_CREATED` (default: `support.ticket.created.v1`)
+  - `SUPPORT_TOPIC_TICKET_UPDATED` (default: `support.ticket.updated.v1`)
 
 ### Important Production Settings:
-(Previous points remain valid)
-- **Internal API Key**: `APP_INTERNAL_API_SECRET_KEY_USER_SVC` must be strong and managed securely.
+(All previous points remain valid)
 
 ## 4. Building and Running Locally
-(No significant changes, ensure new env vars are considered if specific to User-Service internal API key)
+(No significant changes)
 
 ## 5. Running Tests
 (Remains the same)
@@ -75,40 +85,60 @@ The service is configured via `src/main/resources/bootstrap.yml` (for Vault boot
 Refer to the OpenAPI/Swagger documentation (`/swagger-ui.html`, `/v3/api-docs`).
 
 ### Core User Endpoints (`/users`): (No change)
-- **`POST /users`**: Create a new user profile.
-- **`GET /users/{referenceId}`**: Get user profile by reference ID.
-- **`PUT /users/{referenceId}`**: Update user profile.
-
 ### Vendor Onboarding Endpoints (`/vendor-onboarding`): (No change)
-- **`POST /register`**: Register as a new vendor. Requires `X-User-Id` header.
-- **`GET /profile`**: Get current vendor's profile. Requires `X-User-Id` header.
-- **`POST /documents/upload-url`**: Generate a pre-signed URL for KYC document. Requires `X-User-Id` and `docType`.
-
 ### Inventory Management Endpoints (`/inventory-onboarding`, `/inventory`): (No change)
-- **`POST /inventory-onboarding/register`**: Register user as inventory user. Requires `X-User-Id`.
-- **`GET /inventory-onboarding/profile`**: Get inventory user's profile. Requires `X-User-Id`.
-- **`POST /inventory/items`**: Add item. Requires `X-Inventory-Profile-Id`.
-- **`GET /inventory/items`**: List items. Requires `X-Inventory-Profile-Id`.
-- **`POST /inventory/items/{itemId}/adjust`**: Adjust stock.
+### Admin Endpoints (`/admin`): (No change from previous version)
+### Internal Admin Provisioning Endpoints (`/internal/users`): (No change)
 
-### Admin Endpoints (`/admin` - Require ROLE_ADMIN):
-- **`GET /users`**: List all user profiles (paginated).
-- **`GET /users/{userId}`**: Get any user profile by UUID.
-- **`DELETE /users/{userId}`**: (Conceptual) Delete any user profile.
-- **`GET /vendor-profiles`**: List all vendor profiles (paginated).
-- **`GET /inventory-profiles`**: List all inventory profiles (paginated).
-  *(More admin endpoints to be added as needed for "god mode" operations).*
+### Delivery Operations Endpoints (`/delivery` - Require ROLE_DELIVERY_USER or ROLE_ADMIN):
+- **`GET /assignments`**: List active assignments for the delivery user.
+- **`POST /assignments/{assignmentId}/arrive`**: Mark arrival, record GPS.
+- **`POST /assignments/{assignmentId}/call`**: Record a call event.
+- **`POST /assignments/{assignmentId}/upload-photo`**: Upload delivery photo (multipart).
+- **`POST /assignments/{assignmentId}/verify-otp`**: Verify delivery OTP.
+- **`POST /assignments/{assignmentId}/complete`**: Complete an assignment.
 
-### Internal Admin Provisioning Endpoints (`/internal/users` - Requires X-Internal-API-Key):
-- **`POST /provision-admin`**: For internal systems. Provisions a local User-Service profile for an existing Keycloak admin user, assigning `ROLE_ADMIN`.
-    - Request Body: `{ "keycloakUserId": "uuid", "referenceId": "...", "name": "...", "email": "..." }`
+### Support Ticket Endpoints (`/support`):
+- **`POST /tickets`**: Create a new support ticket (customer action, `isAuthenticated()`).
+- **`GET /tickets`**: List tickets (Support/Admin action: `ROLE_SUPPORT_USER` or `ROLE_ADMIN`).
+- **`GET /tickets/{ticketId}`**: Get ticket details (Customer for own, Support/Admin for relevant/all).
+- **`POST /tickets/{ticketId}/messages`**: Post a message to a ticket (Customer for own, Support/Admin for relevant/all).
+- **`PUT /tickets/{ticketId}/status`**: Update ticket status (Support/Admin action).
+- **`GET /tickets/customer/{customerId}`**: List tickets for a specific customer (Support/Admin action).
 
 ## 7. Kafka Events
-(No changes to listed Kafka events from this update. Audit logs are local to User-Service for now.)
+
+### Events Produced by User Service:
+(Previous events for Vendor and Inventory remain)
+- **Topic**: `kyc.vendor.start.v1`
+- **Topic**: `kyc.vendor.document.uploaded.v1`
+- **Topic**: `inventory.item.created.v1`
+- **Topic**: `inventory.stock.adjusted.v1`
+
+- **New for Delivery:**
+  - **Topic**: `order.assigned.v1` (configurable via `delivery.topic.orderAssigned`)
+    - **Event Type**: `OrderAssigned`
+    - **Payload**: Includes `assignmentId`, `orderId`, `deliveryProfileId`, `deliveryUserId`, `assignmentType`, `status`, `assignedAt`.
+    - **Description**: Published when an order is assigned to a delivery user.
+  - **Topic**: `delivery.status.changed.v1` (configurable via `delivery.topic.deliveryStatusChanged`)
+    - **Event Type**: `DeliveryStatusChanged`
+    - **Payload**: Includes `assignmentId`, `orderId`, `deliveryProfileId`, `newStatus`, `oldStatus`, `statusChangeTimestamp`.
+    - **Description**: Published when a delivery assignment's status changes.
+
+- **New for Support:**
+  - **Topic**: `support.ticket.created.v1` (configurable via `support.topic.ticketCreated`)
+    - **Event Type**: `SupportTicketCreated`
+    - **Payload**: Includes `ticketId`, `customerId`, `subject`, `status`, `createdAt`, `assignedToSupportProfileId` (if any).
+    - **Description**: Published when a new support ticket is created.
+  - **Topic**: `support.ticket.updated.v1` (configurable via `support.topic.ticketUpdated`)
+    - **Event Type**: `SupportTicketUpdated`
+    - **Payload**: Includes `ticketId`, `customerId`, `newStatus`, `oldStatus` (if changed), `assignedToSupportProfileId`, `newMessageId` (if applicable), `updatedAt`.
+    - **Description**: Published when a support ticket is updated (e.g., status change, new message, assignment).
+
+*(TODO: Add `user.created`, `user.updated` events if/when implemented for core user changes).*
 
 ## 8. Security & Hardening Notes
 (Previous points remain valid)
-- **Admin "God Mode"**: Access to `/admin/*` endpoints is strictly limited to users with `ROLE_ADMIN`. All actions taken through these endpoints should be heavily audited.
-- **Admin Provisioning**: Creation of User-Service admin profiles is via a secured internal endpoint, assuming primary admin identity and `ROLE_ADMIN` assignment is managed in Keycloak.
-- **Audit Logging**: Actions performed by administrators via `/admin/*` endpoints are logged with an "ADMIN_ACTION" tag (requires log configuration to route `AdminActionAuditLogger` to a secure audit trail).
+- **Authorization**: New roles `ROLE_DELIVERY_USER` and `ROLE_SUPPORT_USER` are introduced. Endpoints for Delivery and Support modules are protected using these roles (or `ROLE_ADMIN`). Fine-grained access control (e.g., delivery user accessing only their assignments, customer accessing only their tickets) is implemented or noted as TODOs in controllers/services.
+- **PII in Delivery/Support**: Evaluate `DeliveryProfile.vehicleDetails`, `DeliveryEvent.payload`, `SupportTicket.subject/description`, `SupportMessage.message` for field-level encryption if they contain sensitive PII. TODOs are in place.
 ```
