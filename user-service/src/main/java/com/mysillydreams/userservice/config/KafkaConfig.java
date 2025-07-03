@@ -25,6 +25,18 @@ public class KafkaConfig {
     @Value("${inventory.topic.stockAdjusted:inventory.stock.adjusted.v1}")
     private String inventoryStockAdjustedTopicName;
 
+    @Value("${delivery.topic.orderAssigned:order.assigned.v1}")
+    private String deliveryOrderAssignedTopicName;
+
+    @Value("${delivery.topic.deliveryStatusChanged:delivery.status.changed.v1}")
+    private String deliveryStatusChangedTopicName;
+
+    @Value("${support.topic.ticketCreated:support.ticket.created.v1}")
+    private String supportTicketCreatedTopicName;
+
+    @Value("${support.topic.ticketUpdated:support.ticket.updated.v1}")
+    private String supportTicketUpdatedTopicName;
+
     // Default number of partitions and replicas for auto-created topics
     // These should be configured based on production needs if topic creation is enabled.
     private static final int DEFAULT_PARTITIONS = 3;
@@ -63,6 +75,42 @@ public class KafkaConfig {
     public NewTopic inventoryStockAdjustedTopic() {
         logger.info("Declaring Kafka topic bean: {}", inventoryStockAdjustedTopicName);
         return TopicBuilder.name(inventoryStockAdjustedTopicName)
+                .partitions(DEFAULT_PARTITIONS)
+                .replicas(DEFAULT_REPLICAS)
+                .build();
+    }
+
+    @Bean
+    public NewTopic deliveryOrderAssignedTopic() {
+        logger.info("Declaring Kafka topic bean: {}", deliveryOrderAssignedTopicName);
+        return TopicBuilder.name(deliveryOrderAssignedTopicName)
+                .partitions(DEFAULT_PARTITIONS)
+                .replicas(DEFAULT_REPLICAS)
+                .build();
+    }
+
+    @Bean
+    public NewTopic deliveryStatusChangedTopic() {
+        logger.info("Declaring Kafka topic bean: {}", deliveryStatusChangedTopicName);
+        return TopicBuilder.name(deliveryStatusChangedTopicName)
+                .partitions(DEFAULT_PARTITIONS)
+                .replicas(DEFAULT_REPLICAS)
+                .build();
+    }
+
+    @Bean
+    public NewTopic supportTicketCreatedTopic() {
+        logger.info("Declaring Kafka topic bean: {}", supportTicketCreatedTopicName);
+        return TopicBuilder.name(supportTicketCreatedTopicName)
+                .partitions(DEFAULT_PARTITIONS)
+                .replicas(DEFAULT_REPLICAS)
+                .build();
+    }
+
+    @Bean
+    public NewTopic supportTicketUpdatedTopic() {
+        logger.info("Declaring Kafka topic bean: {}", supportTicketUpdatedTopicName);
+        return TopicBuilder.name(supportTicketUpdatedTopicName)
                 .partitions(DEFAULT_PARTITIONS)
                 .replicas(DEFAULT_REPLICAS)
                 .build();

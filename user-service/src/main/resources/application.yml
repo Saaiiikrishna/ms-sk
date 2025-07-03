@@ -100,6 +100,20 @@ inventory:
     itemCreated: ${INVENTORY_TOPIC_ITEM_CREATED:inventory.item.created.v1}
     stockAdjusted: ${INVENTORY_TOPIC_STOCK_ADJUSTED:inventory.stock.adjusted.v1}
 
+# Delivery S3 & Kafka Topics
+delivery:
+  s3:
+    photo-bucket: ${DELIVERY_PHOTO_S3_BUCKET:${vendor.s3.bucket}} # Defaults to vendor bucket if not specified
+  topic:
+    orderAssigned: ${DELIVERY_TOPIC_ORDER_ASSIGNED:order.assigned.v1}
+    deliveryStatusChanged: ${DELIVERY_TOPIC_STATUS_CHANGED:delivery.status.changed.v1}
+
+# Support Kafka Topics
+support:
+  topic:
+    ticketCreated: ${SUPPORT_TOPIC_TICKET_CREATED:support.ticket.created.v1}
+    ticketUpdated: ${SUPPORT_TOPIC_TICKET_UPDATED:support.ticket.updated.v1}
+
 
 # --- Profile-specific configurations ---
 ---
