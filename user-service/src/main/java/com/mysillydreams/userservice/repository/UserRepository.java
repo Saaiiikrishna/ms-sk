@@ -2,13 +2,21 @@ package com.mysillydreams.userservice.repository;
 
 import com.mysillydreams.userservice.domain.UserEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.hibernate.annotations.Where; // For @Where clause
 
 import java.util.Optional;
 import java.util.UUID;
 
 @Repository
+@Where(clause = "active = true AND archived_at IS NULL") // Default filter for active users
 public interface UserRepository extends JpaRepository<UserEntity, UUID> {
+
+    // Standard find methods will now respect the @Where clause implicitly
 
     /**
      * Finds a user by their unique business reference ID.

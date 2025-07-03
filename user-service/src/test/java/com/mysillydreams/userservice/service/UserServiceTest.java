@@ -212,4 +212,72 @@ class UserServiceTest {
         });
         assertTrue(exception.getMessage().contains("Invalid Date of Birth format for update"));
     }
+
+    // --- Soft Delete Tests ---
+    @Test
+    void softDeleteUserByReferenceId_userExistsAndActive_softDeletesAndPublishesEvent() {
+        when(userRepository.findByReferenceIdIncludingArchived(userEntity.getReferenceId())).thenReturn(Optional.of(userEntity));
+        when(userRepository.save(any(UserEntity.class))).thenReturn(userEntity);
+        // Assume related profile repositories return empty optionals for simplicity in this unit test
+        // or mock their findByUser().ifPresent(profile -> profileRepo.save(profile)) behavior.
+        // For now, focus on UserEntity state change and event.
+        // doNothing().when(mockUserEventKafkaClient).publishUserArchived(any(UserEntity.class)); // Kafka client is not mocked here yet.
+
+        UserEntity softDeletedUser = userService.softDeleteUserByReferenceId(userEntity.getReferenceId());
+
+        assertFalse(softDeletedUser.isActive());
+        assertNotNull(softDeletedUser.getArchivedAt());
+        verify(userRepository).save(userEntityCaptor.capture());
+        UserEntity captured = userEntityCaptor.getValue();
+        assertFalse(captured.isActive());
+        assertNotNull(captured.getArchivedAt());
+
+        // TODO: Verify Kafka event publication when UserEventKafkaClient is properly mocked and injected.
+        // verify(userEventKafkaClient).publishUserArchived(softDeletedUser);
+        // TODO: Verify deactivation of related profiles if those repos were mocked.
+    }
+
+    @Test
+    void softDeleteUserByReferenceId_userAlreadyArchived_returnsUserWithoutChanges() {
+        userEntity.setActive(false);
+        userEntity.setArchivedAt(Instant.now().minusSeconds(3600));
+        when(userRepository.findByReferenceIdIncludingArchived(userEntity.getReferenceId())).thenReturn(Optional.of(userEntity));
+
+        UserEntity result = userService.softDeleteUserByReferenceId(userEntity.getReferenceId());
+
+        assertEquals(userEntity, result); // Should return the same already archived user
+        assertFalse(result.isActive());
+        assertNotNull(result.getArchivedAt());
+        verify(userRepository, never()).save(any(UserEntity.class)); // No save should occur
+        // verify(userEventKafkaClient, never()).publishUserArchived(any(UserEntity.class));
+    }
+
+    @Test
+    void softDeleteUserByReferenceId_userNotFound_throwsEntityNotFoundException() {
+        String nonExistentRefId = "ref-notfound";
+        when(userRepository.findByReferenceIdIncludingArchived(nonExistentRefId)).thenReturn(Optional.empty());
+
+        assertThrows(EntityNotFoundException.class, () -> {
+            userService.softDeleteUserByReferenceId(nonExistentRefId);
+        });
+    }
+
+    @Test
+    void getUserByIdIncludingArchived_userExists_returnsUser() {
+        when(userRepository.findByIdIncludingArchived(userEntity.getId())).thenReturn(Optional.of(userEntity));
+        UserEntity found = userService.getUserByIdIncludingArchived(userEntity.getId());
+        assertEquals(userEntity, found);
+    }
+
+    @Test
+    void listArchivedUsers_returnsPagedDtos() {
+        Pageable pageable = PageRequest.of(0, 10);
+        userEntity.setActive(false); userEntity.setArchivedAt(Instant.now()); // Make it archived
+        Page<UserEntity> archivedUserPage = new PageImpl<>(List.of(userEntity), pageable, 1);
+        when(userRepository.findAllArchived(pageable)).thenReturn(archivedUserPage);
+
+        Page<UserDto> resultPage = userService.listArchivedUsers(pageable);
+        assertEquals(1, resultPage.getTotalElements());
+        assertFalse(resultPage.getContent().get(0).isActive());
+    }
 }

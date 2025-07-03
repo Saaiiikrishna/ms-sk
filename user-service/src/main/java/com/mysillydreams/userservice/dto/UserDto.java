@@ -48,7 +48,14 @@ public class UserDto {
     // private List<PaymentInfoDto> paymentInfos;
     // private List<SessionDto> sessions;
 
-    private Set<String> roles; // Added roles
+    private Set<String> roles;
+
+    @Schema(description = "Indicates if the user account is active.", example = "true")
+    private boolean active;
+
+    @Schema(description = "Timestamp when the user account was archived/soft-deleted (ISO 8601 format). Null if active.",
+            example = "2023-10-27T10:15:30Z", nullable = true, accessMode = Schema.AccessMode.READ_ONLY)
+    private String archivedAt; // String representation of Instant
 
     private String createdAt;
     private String updatedAt;

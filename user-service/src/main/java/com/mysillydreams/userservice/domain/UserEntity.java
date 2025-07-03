@@ -72,9 +72,15 @@ public class UserEntity {
     @Column(nullable = false)
     private Instant updatedAt;
 
-    @ElementCollection(fetch = FetchType.EAGER) // Eager fetch for roles might be acceptable if number of roles per user is small
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private boolean active = true;
+
+    @Column(nullable = true)
+    private Instant archivedAt;
+
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"))
-    @Column(name = "role_name")
+    @Column(name = "role_name", nullable = false) // Made role_name non-nullable as discussed before
     private Set<String> roles = new HashSet<>();
 
     // Convenience methods for bidirectional relationships if needed

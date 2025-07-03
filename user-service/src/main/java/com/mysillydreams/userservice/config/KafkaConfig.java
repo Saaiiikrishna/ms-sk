@@ -37,6 +37,9 @@ public class KafkaConfig {
     @Value("${support.topic.ticketUpdated:support.ticket.updated.v1}")
     private String supportTicketUpdatedTopicName;
 
+    @Value("${user.topic.archived:user.archived.v1}")
+    private String userArchivedTopicName;
+
     // Default number of partitions and replicas for auto-created topics
     // These should be configured based on production needs if topic creation is enabled.
     private static final int DEFAULT_PARTITIONS = 3;

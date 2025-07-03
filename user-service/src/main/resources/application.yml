@@ -114,6 +114,13 @@ support:
     ticketCreated: ${SUPPORT_TOPIC_TICKET_CREATED:support.ticket.created.v1}
     ticketUpdated: ${SUPPORT_TOPIC_TICKET_UPDATED:support.ticket.updated.v1}
 
+# User specific events (besides module specific ones)
+user:
+  topic:
+    archived: ${USER_TOPIC_ARCHIVED:user.archived.v1}
+    # created: ${USER_TOPIC_CREATED:user.created.v1} # Placeholder for future
+    # updated: ${USER_TOPIC_UPDATED:user.updated.v1} # Placeholder for future
+
 
 # --- Profile-specific configurations ---
 ---
