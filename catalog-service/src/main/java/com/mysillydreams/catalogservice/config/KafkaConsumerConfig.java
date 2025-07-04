@@ -137,8 +137,34 @@ public class KafkaConsumerConfig {
     public ConcurrentKafkaListenerContainerFactory<String, PriceUpdatedEvent> priceUpdatedEventKafkaListenerContainerFactory() {
         ConcurrentKafkaListenerContainerFactory<String, PriceUpdatedEvent> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(priceUpdatedEventConsumerFactory());
+        // Consider adding common error handling, retry policies here if applicable to all priceUpdatedEvent listeners
         return factory;
     }
+
+    // ConsumerFactory for listeners needing raw String payload (e.g., for manual deserialization and robust DLT)
+    @Bean
+    public ConsumerFactory<String, String> stringValueConsumerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class); // Value is String
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // No JsonDeserializer specific props here
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    // ListenerContainerFactory for listeners using stringValueConsumerFactory
+    @Bean("stringPayloadKafkaListenerContainerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, String> stringPayloadKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(stringValueConsumerFactory());
+        // Add common configurations like error handlers, retry templates if needed
+        // e.g., factory.setCommonErrorHandler(new DefaultErrorHandler(...));
+        // factory.setRetryTemplate(...);
+        return factory;
+    }
+
 
     // Factory for BulkPricingRuleEvent
     @Bean

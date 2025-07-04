@@ -138,8 +138,13 @@ public class PricingService {
 
 
     @Transactional(readOnly = true)
+    // CacheKeyConstants.PRICE_DETAIL_CACHE_NAME = "priceDetail"
+    // Using CacheKeyConstants helper method via SpEL:
+    @org.springframework.cache.annotation.Cacheable(
+            cacheNames = com.mysillydreams.catalogservice.config.CacheKeyConstants.PRICE_DETAIL_CACHE_NAME,
+            key = "T(com.mysillydreams.catalogservice.config.CacheKeyConstants).getPriceDetailCacheKey(#itemId, #quantity)")
     public PriceDetailDto getPriceDetail(UUID itemId, int quantity) {
-        log.debug("Calculating price detail for item ID: {} and quantity: {}", itemId, quantity);
+        log.info("Calculating price detail from DB/rules for item ID: {} and quantity: {}", itemId, quantity); // Log DB/rules hit
         if (quantity <= 0) {
             throw new InvalidRequestException("Quantity must be positive.");
         }

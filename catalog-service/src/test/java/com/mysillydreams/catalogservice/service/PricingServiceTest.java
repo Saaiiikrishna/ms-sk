@@ -264,4 +264,38 @@ public class PricingServiceTest {
         assertThat(result.getComponents()).hasSize(1);
         assertThat(result.getComponents().get(0).getCode()).isEqualTo("CATALOG_BASE_PRICE");
     }
+
+    // TODO: When PriceOverrideRepository and logic are implemented in PricingService, enable and complete this test.
+    @Test
+    @org.junit.jupiter.api.Disabled("Manual Price Override feature is not yet implemented")
+    void getPriceDetail_withManualOverride_usesOverridePriceIgnoringDynamicAndBase() {
+        // Setup:
+        // 1. Item with basePrice = 100, dynamicPrice = 90
+        // 2. Mock PriceOverrideRepository to return an active overridePrice = 80 for this item.
+        // item.setBasePrice(new BigDecimal("100.00"));
+        // item.setDynamicPrice(new BigDecimal("90.00"));
+        // PriceOverrideEntity override = PriceOverrideEntity.builder()
+        //         .overridePrice(new BigDecimal("80.00"))
+        //         // ... other necessary fields for an active override
+        //         .build();
+        // when(priceOverrideRepository.findActiveOverrideForItemAtTime(eq(itemId), any(Instant.class)))
+        //         .thenReturn(Optional.of(override)); // Assuming Optional return type
+
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+        // Ensure no bulk discounts or dynamic engine adjustments for simplicity of this specific test.
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+        // dynamicPricingEngine mock (from setUp) returns empty list.
+
+        // Action:
+        // PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Assert:
+        // assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("80.00");
+        // assertThat(result.getOverridePrice()).isEqualByComparingTo("80.00"); // DTO field should reflect this
+        // assertThat(result.getDynamicPrice()).isEqualByComparingTo("90.00"); // Still shown if available
+        // assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");   // Still shown
+        // assertThat(result.getComponents()).hasSize(1); // Or more if override itself has components
+        // assertThat(result.getComponents().get(0).getCode()).isEqualTo("MANUAL_OVERRIDE");
+        // assertThat(result.getComponents().get(0).getAmount()).isEqualByComparingTo("80.00");
+    }
 }

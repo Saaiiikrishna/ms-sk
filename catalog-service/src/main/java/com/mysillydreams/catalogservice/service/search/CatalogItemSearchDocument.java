@@ -27,8 +27,10 @@ public class CatalogItemSearchDocument {
     private String description;
     private ItemType itemType;
     private Double basePrice; // OpenSearch 'double' type for BigDecimal
+    private Double dynamicPrice; // Added for dynamic price
     private boolean active;
     private Instant createdAt;
+    private Instant dynamicPriceLastAppliedTimestamp; // Added for timestamp of last dynamic price
     private Instant updatedAt;
 
     private String categoryId;

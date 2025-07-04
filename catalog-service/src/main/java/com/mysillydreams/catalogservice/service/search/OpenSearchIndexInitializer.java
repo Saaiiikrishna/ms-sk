@@ -54,10 +54,12 @@ public class OpenSearchIndexInitializer {
         properties.put("name", Property.of(p -> p.text(t -> t.analyzer("standard").fields("keyword", Property.of(f -> f.keyword(k -> k.ignoreAbove(256)))))));
         properties.put("description", Property.of(p -> p.text(t -> t.analyzer("standard"))));
         properties.put("itemType", Property.of(p -> p.keyword(k -> k.index(true)))); // PRODUCT, SERVICE
-        properties.put("basePrice", Property.of(p -> p.double_(d -> d))); // Or scaled_float
+        properties.put("basePrice", Property.of(p -> p.double_(d -> d)));
+        properties.put("dynamicPrice", Property.of(p -> p.double_(d -> d))); // Added dynamicPrice mapping
         properties.put("active", Property.of(p -> p.boolean_(b -> b)));
         properties.put("createdAt", Property.of(p -> p.date(d -> d)));
         properties.put("updatedAt", Property.of(p -> p.date(d -> d)));
+        properties.put("dynamicPriceLastAppliedTimestamp", Property.of(p -> p.date(d -> d))); // Added dynamicPriceLastAppliedTimestamp mapping
         properties.put("categoryId", Property.of(p -> p.keyword(k -> k.index(true))));
         properties.put("categoryName", Property.of(p -> p.text(t -> t.fields("keyword", Property.of(f -> f.keyword(k -> k.ignoreAbove(256)))))));
         // Use 'keyword' for exact path matching or a custom analyzer for path hierarchy search
