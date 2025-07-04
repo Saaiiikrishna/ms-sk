@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  namespace: default # Or your target namespace
+  labels:
+    app: catalog-service
+spec:
+  replicas: 2 # Start with 2 replicas, configure HPA later
+  selector:
+    matchLabels:
+      app: catalog-service
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+    spec:
+      containers:
+        - name: catalog-service
+          image: your-docker-registry/catalog-service:latest # Replace with your image URI
+          imagePullPolicy: IfNotPresent # Or Always for development if using :latest tag
+          ports:
+            - name: http
+              containerPort: 8082 # Matches server.port
+          # Resources requests and limits (important for K8s scheduling and stability)
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m" # 0.25 CPU core
+            limits:
+              memory: "1Gi"
+              cpu: "1" # 1 CPU core
+          envFrom:
+            - configMapRef:
+                name: catalog-service-config
+            - secretRef:
+                name: catalog-service-secret
+          # Alternative for DB credentials if using a differently named secret:
+          # env:
+          #   - name: SPRING_DATASOURCE_USERNAME
+          #     valueFrom:
+          #       secretKeyRef:
+          #         name: catalog-db-credentials
+          #         key: DB_USER
+          #   - name: SPRING_DATASOURCE_PASSWORD
+          #     valueFrom:
+          #       secretKeyRef:
+          #         name: catalog-db-credentials
+          #         key: DB_PASS
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 60 # Time for app to start
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Volume mount for externalized application.yml from ConfigMap (if using that method)
+          # volumeMounts:
+          #   - name: app-config-volume
+          #     mountPath: /config
+          #     readOnly: true
+      # volumes:
+      #   - name: app-config-volume
+      #     configMap:
+      #       name: catalog-service-app-config-volume
+      #       items:
+      #         - key: application-kubernetes.yml
+      #           path: application-kubernetes.yml
+
+# --- HorizontalPodAutoscaler (Optional, but recommended for production) ---
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: catalog-service-hpa
+#   namespace: default # Or your target namespace
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: catalog-service
+#   minReplicas: 2
+#   maxReplicas: 5
+#   metrics:
+#     - type: Resource
+#       resource:
+#         name: cpu
+#         target:
+#           type: Utilization
+#           averageUtilization: 70 # Target 70% CPU utilization
+#     - type: Resource
+#       resource:
+#         name: memory
+#         target:
+#           type: Utilization
+#           averageUtilization: 75 # Target 75% Memory utilization
