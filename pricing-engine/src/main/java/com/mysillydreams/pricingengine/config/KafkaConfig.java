@@ -20,7 +20,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mysillydreams.pricingengine.dto.DynamicPricingRuleDto;
 import com.mysillydreams.pricingengine.dto.PriceOverrideDto;
 import com.mysillydreams.pricingengine.dto.MetricEvent;
-import com.mysillydreams.pricingengine.dto.ItemBasePriceEvent; // Added
+import com.mysillydreams.pricingengine.dto.ItemBasePriceEvent;
+import com.mysillydreams.pricingengine.dto.PriceUpdatedEvent; // Added
 import org.apache.kafka.common.serialization.Serde;
 
 
@@ -134,6 +135,11 @@ public class KafkaConfig {
     @Bean
     public Serde<ItemBasePriceEvent> itemBasePriceEventSerde(ObjectMapper objectMapper) {
         return new JsonSerde<>(ItemBasePriceEvent.class, objectMapper);
+    }
+
+    @Bean
+    public Serde<PriceUpdatedEvent> priceUpdatedEventSerde(ObjectMapper objectMapper) {
+        return new JsonSerde<>(PriceUpdatedEvent.class, objectMapper);
     }
 
     // Serde for UUID keys. The internal topics for rules, overrides, and base prices are keyed by String(UUID).

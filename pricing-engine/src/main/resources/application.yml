@@ -47,9 +47,12 @@ topics:
   # Published by Pricing Engine
   priceUpdated: ${KAFKA_TOPIC_PRICE_UPDATED:catalog.price.updated}
   # Internal topics for GlobalKTables
-  internalRules: ${KAFKA_TOPIC_INTERNAL_RULES:internal.rules.v1}
-  internalOverrides: ${KAFKA_TOPIC_INTERNAL_OVERRIDES:internal.overrides.v1}
-  internalBasePrices: ${KAFKA_TOPIC_INTERNAL_BASE_PRICES:internal.item.baseprices.v1}
+  internalRules: ${KAFKA_TOPIC_INTERNAL_RULES:internal.rules.v1} # Keyed by ruleId, will be removed or repurposed
+  internalOverrides: ${KAFKA_TOPIC_INTERNAL_OVERRIDES:internal.overrides.v1} # Keyed by overrideId, will be removed or repurposed
+  internalBasePrices: ${KAFKA_TOPIC_INTERNAL_BASE_PRICES:internal.item.baseprices.v1} # Keyed by itemId (String)
+  internalRulesByItemId: ${KAFKA_TOPIC_INTERNAL_RULES_BY_ITEMID:internal.rules-by-itemid.v1} # Keyed by itemId (String)
+  internalOverridesByItemId: ${KAFKA_TOPIC_INTERNAL_OVERRIDES_BY_ITEMID:internal.overrides-by-itemid.v1} # Keyed by itemId (String)
+  internalLastPublishedPrices: ${KAFKA_TOPIC_INTERNAL_LAST_PRICES:internal.last-published-prices.v1} # Keyed by itemId (String)
   # DLT Topics
   demandMetricsDlt: ${KAFKA_TOPIC_DEMAND_METRICS_DLT:demand.metrics.dlt}
 
@@ -103,7 +106,10 @@ topics:
   priceOverride: price.override.events   # Direct value for test profile
   demandMetrics: demand.metrics.test     # Different topic for test isolation if needed
   priceUpdated: catalog.price.updated.test # Test topic for price updates
-  internalRules: internal.rules.v1.test
-  internalOverrides: internal.overrides.v1.test
+  internalRules: internal.rules.v1.test # Old, to be removed
+  internalOverrides: internal.overrides.v1.test # Old, to be removed
   internalBasePrices: internal.item.baseprices.v1.test
+  internalRulesByItemId: internal.rules-by-itemid.v1.test
+  internalOverridesByItemId: internal.overrides-by-itemid.v1.test
+  internalLastPublishedPrices: internal.last-published-prices.v1.test
   demandMetricsDlt: demand.metrics.dlt.test
