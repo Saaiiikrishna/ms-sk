@@ -153,30 +153,44 @@ public class PricingService {
         }
 
         List<PricingComponent> finalComponents = new ArrayList<>();
-        BigDecimal currentCalculatedPrice = item.getBasePrice(); // Start with actual catalog base price
+        BigDecimal effectiveBasePrice = item.getBasePrice(); // Start with catalog base price
+        String basePriceSource = "CATALOG_BASE_PRICE";
 
-        finalComponents.add(PricingComponent.builder()
-            .code("CATALOG_BASE_PRICE")
-            .description("Catalog Base Price")
-            .amount(item.getBasePrice().setScale(2, RoundingMode.HALF_UP))
-            .build());
-
-        // TODO: Implement PriceOverrideEntity and repository for manual overrides
-        // Optional<PriceOverrideEntity> override = priceOverrideRepository.findActiveOverride(itemId, Instant.now());
-        BigDecimal overridePrice = null; // Placeholder for manual override price
-        // if (override.isPresent()) {
-        //     overridePrice = override.get().getOverridePrice();
-        //     BigDecimal diffToOverride = overridePrice.subtract(item.getBasePrice());
+        // TODO: 1. Check for active manual overrides (highest precedence)
+        // PriceOverrideEntity activeManualOverride = priceOverrideRepository.findActiveOverrideForItemAtTime(itemId, Instant.now());
+        // if (activeManualOverride != null) {
+        //     effectiveBasePrice = activeManualOverride.getOverridePrice();
+        //     basePriceSource = "MANUAL_OVERRIDE";
         //     finalComponents.add(PricingComponent.builder()
-        //         .code("MANUAL_OVERRIDE_ADJUSTMENT")
-        //         .description("Manual Price Override Adjustment")
-        //         .amount(diffToOverride.setScale(2, RoundingMode.HALF_UP))
+        //         .code(basePriceSource)
+        //         .description("Manual Override Applied")
+        //         .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
         //         .build());
-        //     currentCalculatedPrice = overridePrice; // This is the new reference
-        //     log.debug("Applied manual override price: {} for item {}", currentCalculatedPrice, itemId);
-        // }
+        // } else
+        if (item.getDynamicPrice() != null) {
+            // 2. Check for dynamic price from pricing engine
+            effectiveBasePrice = item.getDynamicPrice();
+            basePriceSource = "DYNAMIC_PRICE_FROM_ENGINE";
+            // For now, add a single component. Ideally, use components from PriceUpdatedEvent if stored.
+            finalComponents.add(PricingComponent.builder()
+                .code(basePriceSource)
+                .description("Dynamic Price Applied from Pricing Engine")
+                .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
+                .build());
+            log.debug("Using dynamic price {} for item {}", effectiveBasePrice, itemId);
+        } else {
+            // 3. Fallback to catalog base price
+            finalComponents.add(PricingComponent.builder()
+                .code(basePriceSource) // Will be "CATALOG_BASE_PRICE"
+                .description("Catalog Base Price")
+                .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
+                .build());
+            log.debug("Using catalog base price {} for item {}", effectiveBasePrice, itemId);
+        }
 
-        // Apply Bulk Pricing Rules (calculated based on currentCalculatedPrice, which is base or override)
+        BigDecimal currentCalculatedPrice = effectiveBasePrice; // This is the price before further adjustments like bulk.
+
+        // Apply Bulk Pricing Rules (calculated based on the effectiveBasePrice determined above)
         List<BulkPricingRuleEntity> applicableRules = bulkPricingRuleRepository.findActiveApplicableRules(itemId, quantity, Instant.now());
         Optional<BulkPricingRuleEntity> bestBulkRule = applicableRules.stream()
                 .max(Comparator.comparing(BulkPricingRuleEntity::getDiscountPercentage));
@@ -224,10 +238,11 @@ public class PricingService {
                 .itemId(itemId)
                 .quantity(quantity)
                 .basePrice(item.getBasePrice().setScale(2, RoundingMode.HALF_UP)) // Original catalog base price
-                .overridePrice(overridePrice != null ? overridePrice.setScale(2, RoundingMode.HALF_UP) : null) // Actual override price if set
-                .components(finalComponents) // The full list of components including base, override adjustment, bulk, dynamic
-                .finalUnitPrice(finalUnitPrice) // Final price per unit after all components
-                .totalPrice(totalPrice) // quantity * finalUnitPrice
+                // .overridePrice(activeManualOverride != null ? activeManualOverride.getOverridePrice().setScale(2, RoundingMode.HALF_UP) : null) // If activeManualOverride was used
+                .dynamicPrice(item.getDynamicPrice() != null && basePriceSource.equals("DYNAMIC_PRICE_FROM_ENGINE") ? item.getDynamicPrice().setScale(2, RoundingMode.HALF_UP) : null) // Show dynamic if used
+                .components(finalComponents)
+                .finalUnitPrice(finalUnitPrice)
+                .totalPrice(totalPrice)
                 .build();
     }
 
