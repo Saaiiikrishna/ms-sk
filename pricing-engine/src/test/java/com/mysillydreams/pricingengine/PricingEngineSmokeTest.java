@@ -2,6 +2,8 @@ package com.mysillydreams.pricingengine;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mysillydreams.pricingengine.dto.MetricEvent;
+import com.mysillydreams.pricingengine.dto.PriceUpdatedEvent;
 import com.mysillydreams.pricingengine.domain.DynamicPricingRuleEntity;
 import com.mysillydreams.pricingengine.domain.PriceOverrideEntity;
 import com.mysillydreams.pricingengine.dto.DynamicPricingRuleDto;
@@ -11,6 +13,8 @@ import com.mysillydreams.pricingengine.repository.PriceOverrideRepository;
 import com.mysillydreams.pricingengine.service.PricingEngineService;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,11 +23,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.KafkaMessageListenerContainer;
+import org.springframework.kafka.listener.MessageListener;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.kafka.test.utils.ContainerTestUtils;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
+import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -35,6 +45,8 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -101,13 +113,42 @@ public class PricingEngineSmokeTest {
     @Value("${topics.priceOverride}")
     private String priceOverrideTopic;
 
+    @Value("${topics.demandMetrics}")
+    private String demandMetricsTopic;
+
+    @Value("${topics.priceUpdated}")
+    private String priceUpdatedTopic;
+
     private KafkaTemplate<String, String> kafkaTemplate;
+    private KafkaMessageListenerContainer<String, PriceUpdatedEvent> priceUpdatedListenerContainer;
+    private BlockingQueue<ConsumerRecord<String, PriceUpdatedEvent>> priceUpdatedConsumerRecords;
+
 
     @BeforeEach
     void setUp() {
+        // Producer setup
         Map<String, Object> producerProps = KafkaTestUtils.producerProps(embeddedKafkaBroker);
         DefaultKafkaProducerFactory<String, String> pf = new DefaultKafkaProducerFactory<>(producerProps);
         kafkaTemplate = new KafkaTemplate<>(pf);
+
+        // Consumer setup for priceUpdatedTopic
+        priceUpdatedConsumerRecords = new LinkedBlockingQueue<>();
+        Map<String, Object> consumerProps = KafkaTestUtils.consumerProps("smokeTestPriceUpdatedConsumer", "true", embeddedKafkaBroker);
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringDeserializer.class);
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        consumerProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.mysillydreams.pricingengine.dto");
+        consumerProps.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PriceUpdatedEvent.class.getName());
+        consumerProps.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, "false");
+
+        DefaultKafkaConsumerFactory<String, PriceUpdatedEvent> priceUpdatedCF =
+                new DefaultKafkaConsumerFactory<>(consumerProps);
+
+        ContainerProperties priceUpdatedContainerProps = new ContainerProperties(priceUpdatedTopic);
+        priceUpdatedListenerContainer = new KafkaMessageListenerContainer<>(priceUpdatedCF, priceUpdatedContainerProps);
+        priceUpdatedListenerContainer.setupMessageListener((MessageListener<String, PriceUpdatedEvent>) priceUpdatedConsumerRecords::add);
+        priceUpdatedListenerContainer.start();
+        ContainerTestUtils.waitForAssignment(priceUpdatedListenerContainer, embeddedKafkaBroker.getPartitionsPerTopic(priceUpdatedTopic));
+
 
         // Clean repositories before each test
         ruleRepository.deleteAll();
@@ -116,14 +157,18 @@ public class PricingEngineSmokeTest {
 
     @AfterEach
     void tearDown() {
-        // You could reset spies here if needed, but @DirtiesContext might handle full context reset
+        if (priceUpdatedListenerContainer != null) {
+            priceUpdatedListenerContainer.stop();
+        }
     }
 
     @Test
     void shouldConsumeRuleAndOverrideEvents_SaveToDb_AndUpdateMetrics_AndCallPricingService() throws JsonProcessingException, InterruptedException {
+        // This test name is now a bit broad. It will also test metric consumption and price update publication.
+
         // Arrange: Dynamic Pricing Rule Event
         UUID ruleId = UUID.randomUUID();
-        UUID ruleItemId = UUID.randomUUID();
+        final UUID ruleItemId = UUID.randomUUID(); // Make final for use in lambda/anonymous class if needed
         Map<String, Object> ruleParams = new HashMap<>();
         ruleParams.put("discount", 5.0);
         DynamicPricingRuleDto ruleDto = DynamicPricingRuleDto.builder()
@@ -180,9 +225,61 @@ public class PricingEngineSmokeTest {
         });
 
 
-        // Assert: Verify PricingEngineService calls (using timeout for async listener processing)
+        // Assert: Verify PricingEngineService calls for rules and overrides
         verify(pricingEngineService, timeout(5000).times(1)).updateRules(org.mockito.ArgumentMatchers.anyList());
         verify(pricingEngineService, timeout(5000).times(1)).updateOverrides(org.mockito.ArgumentMatchers.anyList());
-        // Can be more specific with argument captors if needed for the list content
+
+
+        // Arrange: Demand Metric Event for the same item as the rule
+        MetricEvent metricEvent = MetricEvent.builder()
+                .eventId(UUID.randomUUID())
+                .itemId(ruleItemId) // Use same itemId as the rule for testing rule application
+                .metricType("VIEW_COUNT")
+                .timestamp(Instant.now())
+                .details(Map.of("views", 150L)) // Example detail
+                .build();
+        String metricPayload = objectMapper.writeValueAsString(metricEvent);
+
+        // Act: Publish metric event
+        kafkaTemplate.send(new ProducerRecord<>(demandMetricsTopic, metricEvent.getItemId().toString(), metricPayload));
+
+        // Assert: Verify PricingEngineService processMetric call
+        // The Kafka Streams topology runs in its own threads. Awaitility might be needed if it's slow.
+        // Also, processMetric in DefaultPricingEngineService now calls calculateAndPublishPrice.
+        // We are spying on pricingEngineService, so we can verify processMetric.
+        // The calculateAndPublishPrice will then use the KafkaTemplate to send a PriceUpdatedEvent.
+        verify(pricingEngineService, timeout(10000).times(1)).processMetric(any(MetricEvent.class));
+
+
+        // Assert: Check for PriceUpdatedEvent on the output topic
+        ConsumerRecord<String, PriceUpdatedEvent> priceUpdateRecord = priceUpdatedConsumerRecords.poll(10, TimeUnit.SECONDS);
+        assertThat(priceUpdateRecord).as("PriceUpdatedEvent should be published").isNotNull();
+        assertThat(priceUpdateRecord.key()).isEqualTo(ruleItemId.toString());
+        PriceUpdatedEvent publishedPriceUpdate = priceUpdateRecord.value();
+        assertThat(publishedPriceUpdate.getItemId()).isEqualTo(ruleItemId);
+
+        // Further assertions on publishedPriceUpdate content can be added based on expected logic
+        // e.g. if the rule "FLAT_AMOUNT_OFF" with discount 5.0 was applied to base price 100.0
+        // final price should be 95.0
+        // DefaultPricingEngineService.fetchBasePrice returns 100.00 by default in tests.
+        // Rule was FLAT_AMOUNT_OFF with discount 5.0, so expected adjustment factor -0.05
+        // Expected final price: 100 * (1 - 0.05) = 95.00 if metric doesn't change it
+        // The current rule in test is "FLAT_AMOUNT_OFF" with "discount": 5.0 in params
+        // The calculateRuleAdjustment logic for FLAT_AMOUNT_OFF is:
+        // adjustmentFactor = BigDecimal.valueOf(amountOff).divide(basePrice, 4, RoundingMode.HALF_UP).negate();
+        // So, 5.0 / 100.00 = 0.05. Negated = -0.05.
+        // Final price = 100.00 * (1 - 0.05) = 100.00 * 0.95 = 95.00
+        assertThat(publishedPriceUpdate.getFinalPrice()).isEqualByComparingTo("95.00");
+        assertThat(publishedPriceUpdate.getComponents()).anySatisfy(component -> {
+            assertThat(component.getComponentName()).isEqualTo("FLAT_AMOUNT_OFF");
+            assertThat(component.getValue()).isEqualByComparingTo("-5.00"); // The value of the adjustment amount
+        });
+
+
+        // Assert: Check metrics counter for demand metrics
+        Counter metricsConsumed = meterRegistry.get("pricing.engine.metrics.consumed").counter();
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+             assertThat(metricsConsumed.count()).isEqualTo(1.0);
+        });
     }
 }

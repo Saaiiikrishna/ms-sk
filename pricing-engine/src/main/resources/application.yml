@@ -43,6 +43,7 @@ topics:
   dynamicRule: ${KAFKA_TOPIC_DYNAMIC_RULE:dynamic.pricing.rule.events} # Using env var with default
   priceOverride: ${KAFKA_TOPIC_PRICE_OVERRIDE:price.override.events} # Using env var with default
   demandMetrics: ${KAFKA_TOPIC_DEMAND_METRICS:demand.metrics}       # Using env var with default
+  priceUpdated: ${KAFKA_TOPIC_PRICE_UPDATED:catalog.price.updated} # Topic for publishing price updates
 
 management:
   endpoints:
@@ -84,3 +85,4 @@ topics:
   dynamicRule: dynamic.pricing.rule.events # Direct value for test profile
   priceOverride: price.override.events   # Direct value for test profile
   demandMetrics: demand.metrics.test     # Different topic for test isolation if needed
+  priceUpdated: catalog.price.updated.test # Test topic for price updates
