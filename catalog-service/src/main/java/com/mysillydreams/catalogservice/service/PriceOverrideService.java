@@ -33,7 +33,7 @@ public class PriceOverrideService {
     private final CatalogItemRepository itemRepository;
     private final OutboxEventService outboxEventService;
 
-    @Value("${app.kafka.topic.price-override-events}")
+    @Value("${kafka.topics.priceOverride}")
     private String priceOverrideEventsTopic;
 
     private static final String AGGREGATE_TYPE_PRICE_OVERRIDE = "PriceOverride";

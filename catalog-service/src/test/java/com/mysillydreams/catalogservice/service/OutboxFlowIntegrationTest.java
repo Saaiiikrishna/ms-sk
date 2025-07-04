@@ -56,8 +56,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 @EmbeddedKafka(
     partitions = 1,
     topics = {
-        "${app.kafka.topic.dynamic-rule-events}",
-        "${app.kafka.topic.price-override-events}"
+        "${kafka.topics.dynamicPricingRule}",
+        "${kafka.topics.priceOverride}"
     }
 )
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -103,9 +103,9 @@ public class OutboxFlowIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Value("${app.kafka.topic.dynamic-rule-events}")
+    @Value("${kafka.topics.dynamicPricingRule}")
     private String dynamicRuleEventsTopic;
-    @Value("${app.kafka.topic.price-override-events}")
+    @Value("${kafka.topics.priceOverride}")
     private String priceOverrideEventsTopic;
 
     private KafkaMessageListenerContainer<String, DynamicPricingRuleDto> dynamicRuleListenerContainer;

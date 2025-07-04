@@ -76,6 +76,12 @@ logging:
     org.hibernate.type.descriptor.sql: TRACE # To see parameters bound to SQL queries
     org.apache.kafka: INFO
 
+# Custom Kafka Topic Names (application specific, not Spring Kafka properties)
+kafka:
+  topics:
+    dynamicPricingRule: dynamic.pricing.rule.events
+    priceOverride: price.override.events
+
 # Custom properties for Kafka topics
 app:
   kafka:
@@ -92,9 +98,6 @@ app:
       cart-checked-out: cart.checked_out
       # For SearchIndexer
       catalog-events-for-indexing: catalog.events.for.indexing # Could be a single topic or multiple
-      # New topics for dynamic pricing and overrides
-      dynamic-rule-events: dynamic-rule-events
-      price-override-events: price-override-events
   outbox:
     poll:
       fixed-delay-ms: 10000 # Poll every 10 seconds

@@ -35,7 +35,7 @@ public class DynamicPricingRuleService {
     private final CatalogItemRepository itemRepository;
     private final OutboxEventService outboxEventService;
 
-    @Value("${app.kafka.topic.dynamic-rule-events}")
+    @Value("${kafka.topics.dynamicPricingRule}")
     private String dynamicRuleEventsTopic;
 
     // Aggregate type for outbox events related to dynamic pricing rules
