@@ -45,23 +45,27 @@ public class DefaultPricingEngineService implements PricingEngineService {
     // @Value("${pricing.engine.update.threshold.amount:0.00}") // Example if using amount threshold too
     // private BigDecimal priceUpdateThresholdAmount;
 
+    // KafkaTemplate and priceUpdatedTopic removed, as publishing is now handled by the stream
+    // private final KafkaTemplate<String, PriceUpdatedEvent> priceUpdatedEventKafkaTemplate;
+    // @Value("${topics.priceUpdated:catalog.price.updated}")
+    // private String priceUpdatedTopic;
 
     public DefaultPricingEngineService(
-            KafkaTemplate<String, PriceUpdatedEvent> kafkaTemplate,
+            // KafkaTemplate<String, PriceUpdatedEvent> kafkaTemplate, // Removed
             ObjectMapper objectMapper) {
-        this.priceUpdatedEventKafkaTemplate = kafkaTemplate;
+        // this.priceUpdatedEventKafkaTemplate = kafkaTemplate; // Removed
         this.objectMapper = objectMapper;
     }
 
     @Override
-    public void updateRules(List<DynamicPricingRuleDto> rules) { // Changed to DTO
+    public void updateRules(List<DynamicPricingRuleDto> rules) {
         if (rules != null && !rules.isEmpty()) {
             log.info("DefaultPricingEngineService: updateRules called with {} DTOs. Updates handled by GKT.", rules.size());
         }
     }
 
     @Override
-    public void updateOverrides(List<PriceOverrideDto> overrides) { // Changed to DTO
+    public void updateOverrides(List<PriceOverrideDto> overrides) {
         if (overrides != null && !overrides.isEmpty()) {
             log.info("DefaultPricingEngineService: updateOverrides called with {} DTOs. Updates handled by GKT.", overrides.size());
         }
@@ -98,26 +102,38 @@ public class DefaultPricingEngineService implements PricingEngineService {
     }
 
     /**
-     * Calculates and publishes the dynamic price for an item based on aggregated metrics,
-     * applicable rules, and overrides. This method will be called by the Kafka Streams topology.
+     * Calculates and potentially publishes the dynamic price for an item based on enriched aggregated data.
+     * This method is called by the Kafka Streams topology.
+     * The decision to publish (e.g. based on threshold) and the actual publishing
+     * might be handled by the stream itself after this method returns a calculated price event or decision.
+     * For now, this method will contain the threshold logic and publishing.
      *
-     * @param itemId            The ID of the item.
-     * @param basePrice         The base price of the item.
-     * @param aggregatedMetrics The aggregated metrics for the item from a time window.
-     * @param applicableRuleDtos     List of applicable dynamic pricing rule DTOs.
-     * @param activeOverrideDto      An active price override DTO, if any.
+     * @param enrichedData Contains aggregated metrics, and joined rule, override, and base price information.
      * @param lastPublishedFinalPrice Optional last known published final price for threshold checking.
+     * @return An Optional<PriceUpdatedEvent> which is present if a new price should be published,
+     *         or empty if the price change is below threshold or an error occurred.
      */
     @Override
-    public void calculateAndPublishPrice(UUID itemId,
-                                       BigDecimal basePrice,
-                                       AggregatedMetric aggregatedMetrics,
-                                       List<DynamicPricingRuleDto> applicableRuleDtos, // Changed to DTO
-                                       PriceOverrideDto activeOverrideDto,           // Changed to DTO
-                                       Optional<BigDecimal> lastPublishedFinalPrice) { // Added for threshold
+    public Optional<PriceUpdatedEvent> calculatePrice(EnrichedAggregatedMetric enrichedData, // Renamed and changed return type
+                                                      Optional<BigDecimal> lastPublishedFinalPrice) {
+
+        AggregatedMetric aggregatedMetrics = enrichedData.getAggregatedMetric();
+        UUID itemId = aggregatedMetrics.getItemId();
+        // Base price comes from ItemBasePriceEvent within enrichedData
+        BigDecimal basePrice = enrichedData.getBasePrice().orElse(null);
+        // Rule DTO is directly in enrichedData (assuming at most one for now for simplicity from GKT join)
+        // If multiple rules, enrichedData.getRuleDto() would need to be List<DynamicPricingRuleDto>
+        // For now, to match the previous structure of this method, we'll wrap it in a list if present.
+        // Corrected: enrichedData now directly contains ruleDtos as a List
+        List<DynamicPricingRuleDto> applicableRuleDtos = enrichedData.getRuleDtos() != null ?
+                                                          enrichedData.getRuleDtos() :
+                                                          Collections.emptyList();
+        PriceOverrideDto activeOverrideDto = enrichedData.getOverrideDto();
+
+
         log.info("Calculating price for item ID: {} with basePrice: {}, aggregated metrics: {}, {} applicable rules, activeOverride: {}, lastPublishedPrice: {}",
                 itemId, basePrice, aggregatedMetrics,
-                applicableRuleDtos != null ? applicableRuleDtos.size() : 0,
+                applicableRuleDtos.size(), // This will now correctly reflect the size of the list
                 activeOverrideDto != null ? activeOverrideDto.getId() : "none",
                 lastPublishedFinalPrice.map(BigDecimal::toPlainString).orElse("N/A"));
 
@@ -126,7 +142,7 @@ public class DefaultPricingEngineService implements PricingEngineService {
 
         if (basePrice == null) {
             log.error("Base price is null for item ID: {}. Cannot calculate dynamic price.", itemId);
-            return;
+            return Optional.empty(); // Return empty if no base price
         }
         pricingComponents.add(PricingComponent.builder().componentName("BASE_PRICE").value(basePrice).description("Standard base price").build());
         BigDecimal currentCalculatedPrice = basePrice;
@@ -147,9 +163,12 @@ public class DefaultPricingEngineService implements PricingEngineService {
         } else {
             // Evaluate dynamic pricing rules (using DTOs)
             BigDecimal totalAdjustmentFactor = BigDecimal.ZERO;
-            if (applicableRuleDtos != null) {
-                for (DynamicPricingRuleDto ruleDto : applicableRuleDtos) {
-                    if (ruleDto.isEnabled()) {
+            // Note: enrichedData.getRuleDto() currently provides one rule. If an item can have multiple active rules,
+            // the EnrichedAggregatedMetric.ruleDto field should be a List, and this loop would iterate it.
+            // For now, using the (potentially single) rule from enrichedData.
+            if (!applicableRuleDtos.isEmpty()) {
+                for (DynamicPricingRuleDto ruleDto : applicableRuleDtos) { // Loop will run once if ruleDto is not null
+                    if (ruleDto.isEnabled()) { // This check might be redundant if GKT only stores enabled ones
                         BigDecimal ruleAdjustment = calculateRuleAdjustment(ruleDto, aggregatedMetrics, basePrice);
                         totalAdjustmentFactor = totalAdjustmentFactor.add(ruleAdjustment);
                         pricingComponents.add(PricingComponent.builder()
@@ -196,33 +215,36 @@ public class DefaultPricingEngineService implements PricingEngineService {
                 log.info("Price change for item {} ({}) is below threshold ({}%). Not publishing update.",
                         itemId, percentageChange.multiply(BigDecimal.valueOf(100)).setScale(2, RoundingMode.HALF_UP),
                         BigDecimal.valueOf(priceUpdateThresholdPercentage).multiply(BigDecimal.valueOf(100)));
-                return; // Skip publishing
+                return Optional.empty(); // Skip publishing by returning empty Optional
             }
         } else {
-            // No last published price, so always publish if it's different from base (or always publish first calculated price)
-            // Current logic already calculates finalPrice, so if it's different from base, it's a change.
-            // If currentCalculatedPrice is the same as basePrice AND no rules/overrides applied, maybe don't publish?
-            // For now, if no last price, we publish the newly calculated one.
-            log.info("No last published price for item {}. Publishing newly calculated price.", itemId);
+            // No last published price.
+            // Publish if the newly calculated price is different from the base price,
+            // OR if there were any components applied (override or rules), indicating a calculation happened.
+            // This avoids publishing a "no-change" event if calculated price is same as base and no rules/overrides applied.
+            if (currentCalculatedPrice.compareTo(basePrice) == 0 && pricingComponents.size() == 1 && "BASE_PRICE".equals(pricingComponents.get(0).getComponentName())) {
+                log.info("No last published price for item {} and calculated price is same as base price with no adjustments. Not publishing.", itemId);
+                return Optional.empty();
+            }
+            log.info("No last published price for item {}. Proceeding to create PriceUpdatedEvent.", itemId);
         }
-
 
         PriceUpdatedEvent priceUpdatedEvent = PriceUpdatedEvent.builder()
                 .eventId(UUID.randomUUID())
                 .itemId(itemId)
                 .basePrice(basePrice)
-                .finalPrice(currentCalculatedPrice) // Use the price after threshold check
+                .finalPrice(currentCalculatedPrice)
                 .currency("USD") // TODO: Make currency configurable
                 .timestamp(calculationTime)
                 .components(pricingComponents)
                 .build();
 
-        log.info("Publishing PriceUpdatedEvent: {}", priceUpdatedEvent);
-        priceUpdatedEventKafkaTemplate.send(priceUpdatedTopic, itemId.toString(), priceUpdatedEvent);
+        log.info("Price calculation complete for item {}. PriceUpdatedEvent to be published by stream: {}", itemId, priceUpdatedEvent);
+        return Optional.of(priceUpdatedEvent);
     }
 
 
-    private BigDecimal calculateRuleAdjustment(DynamicPricingRuleDto ruleDto, AggregatedMetric aggregatedMetrics, BigDecimal basePrice) { // Changed to DTO
+    private BigDecimal calculateRuleAdjustment(DynamicPricingRuleDto ruleDto, AggregatedMetric aggregatedMetrics, BigDecimal basePrice) {
         log.debug("Calculating adjustment for rule ID: {}, type: {}, item ID: {}", ruleDto.getId(), ruleDto.getRuleType(), ruleDto.getItemId());
         BigDecimal adjustmentFactor = BigDecimal.ZERO;
 

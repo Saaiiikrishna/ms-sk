@@ -49,6 +49,9 @@ public class CatalogItemEntity {
     @Column(name = "base_price", nullable = false, precision = 12, scale = 2)
     private BigDecimal basePrice;
 
+    @Column(name = "dynamic_price", precision = 12, scale = 2) // New field for dynamic price
+    private BigDecimal dynamicPrice; // Nullable, as it might not always be set
+
     @Type(JsonBinaryType.class) // Using JsonBinaryType for PostgreSQL JSONB
     @Column(columnDefinition = "jsonb")
     private Map<String, Object> metadata; // E.g., dimensions for products, duration for services

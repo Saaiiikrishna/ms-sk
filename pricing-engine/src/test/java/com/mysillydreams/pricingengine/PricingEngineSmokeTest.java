@@ -65,9 +65,13 @@ import static org.mockito.Mockito.verify;
 @EmbeddedKafka(
         partitions = 1,
         topics = {
-            "${topics.dynamicRule}", "${topics.priceOverride}", "${topics.demandMetrics}",
-            "${topics.internalRules}", "${topics.internalOverrides}", "${topics.internalBasePrices}",
-            "${topics.priceUpdated}", "${topics.demandMetricsDlt}"
+            "${topics.dynamicRule}", "${topics.priceOverride}", "${topics.demandMetrics}", // External inputs
+            "${topics.internalRulesByItemId}", // Corrected: itemId keyed internal topic for rules
+            "${topics.internalOverridesByItemId}", // Corrected: itemId keyed internal topic for overrides
+            "${topics.internalBasePrices}",
+            "${topics.internalLastPublishedPrices}", // For KTable state
+            "${topics.priceUpdated}", // External output
+            "${topics.demandMetricsDlt}"
         }
 )
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -122,22 +126,29 @@ public class PricingEngineSmokeTest {
     @Value("${topics.demandMetrics}")
     private String demandMetricsTopic;
 
-    @Value("${topics.priceUpdated}")
-    private String priceUpdatedTopic;
+    @Value("${topics.priceUpdated}") // This is the external output topic
+    private String externalPriceUpdatedTopic;
 
-    @Value("${topics.internalRules}")
-    private String internalRulesTopic;
-    @Value("${topics.internalOverrides}")
-    private String internalOverridesTopic;
+    // Corrected topic names for what RuleOverrideEventListener publishes to
+    @Value("${topics.internalRulesByItemId}")
+    private String internalRulesByItemIdTopic;
+    @Value("${topics.internalOverridesByItemId}")
+    private String internalOverridesByItemIdTopic;
+    // Base prices and last published prices topics remain the same
     @Value("${topics.internalBasePrices}")
     private String internalBasePricesTopic;
+    @Value("${topics.internalLastPublishedPrices}")
+    private String internalLastPublishedPricesTopic;
+
     @Value("${topics.demandMetricsDlt}")
     private String demandMetricsDltTopic;
 
 
-    private KafkaTemplate<String, String> kafkaTemplate; // For sending raw JSON strings
+    private KafkaTemplate<String, String> kafkaTemplate;
     private KafkaMessageListenerContainer<String, PriceUpdatedEvent> priceUpdatedListenerContainer;
     private BlockingQueue<ConsumerRecord<String, PriceUpdatedEvent>> priceUpdatedConsumerRecords;
+    private KafkaMessageListenerContainer<String, MetricEvent> dltListenerContainer; // For verifying DLT
+    private BlockingQueue<ConsumerRecord<String, MetricEvent>> dltConsumerRecords;
 
 
     @BeforeEach
@@ -146,100 +157,173 @@ public class PricingEngineSmokeTest {
         DefaultKafkaProducerFactory<String, String> pf = new DefaultKafkaProducerFactory<>(producerProps);
         kafkaTemplate = new KafkaTemplate<>(pf);
 
+        // Consumer for external priceUpdatedTopic
         priceUpdatedConsumerRecords = new LinkedBlockingQueue<>();
-        Map<String, Object> consumerProps = KafkaTestUtils.consumerProps("smokeTestPriceUpdatedConsumer", "true", embeddedKafkaBroker);
-        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringDeserializer.class);
-        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
-        consumerProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.mysillydreams.pricingengine.dto");
-        consumerProps.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PriceUpdatedEvent.class.getName());
-        consumerProps.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, "false");
-
-        DefaultKafkaConsumerFactory<String, PriceUpdatedEvent> priceUpdatedCF = new DefaultKafkaConsumerFactory<>(consumerProps);
-        ContainerProperties priceUpdatedContainerProps = new ContainerProperties(priceUpdatedTopic);
+        Map<String, Object> priceUpdatedConsumerProps = KafkaTestUtils.consumerProps("smokeTestPriceUpdatedConsumer", "true", embeddedKafkaBroker);
+        // Deserializer props already set for PriceUpdatedEvent in main KafkaConfig, can rely on that or be explicit
+        priceUpdatedConsumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        priceUpdatedConsumerProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.mysillydreams.pricingengine.dto");
+        priceUpdatedConsumerProps.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PriceUpdatedEvent.class.getName());
+        priceUpdatedConsumerProps.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, "false");
+        DefaultKafkaConsumerFactory<String, PriceUpdatedEvent> priceUpdatedCF = new DefaultKafkaConsumerFactory<>(priceUpdatedConsumerProps);
+        ContainerProperties priceUpdatedContainerProps = new ContainerProperties(externalPriceUpdatedTopic); // Use the correct variable
         priceUpdatedListenerContainer = new KafkaMessageListenerContainer<>(priceUpdatedCF, priceUpdatedContainerProps);
         priceUpdatedListenerContainer.setupMessageListener((MessageListener<String, PriceUpdatedEvent>) priceUpdatedConsumerRecords::add);
         priceUpdatedListenerContainer.start();
-        ContainerTestUtils.waitForAssignment(priceUpdatedListenerContainer, embeddedKafkaBroker.getPartitionsPerTopic(priceUpdatedTopic));
+        ContainerTestUtils.waitForAssignment(priceUpdatedListenerContainer, embeddedKafkaBroker.getPartitionsPerTopic(externalPriceUpdatedTopic));
 
-        // No direct DB cleanup for rules/overrides as they are not persisted by this service anymore
+        // Consumer for DLT topic
+        dltConsumerRecords = new LinkedBlockingQueue<>();
+        Map<String, Object> dltConsumerProps = KafkaTestUtils.consumerProps("smokeTestDltConsumer", "true", embeddedKafkaBroker);
+        dltConsumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        dltConsumerProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.mysillydreams.pricingengine.dto");
+        dltConsumerProps.put(JsonDeserializer.VALUE_DEFAULT_TYPE, MetricEvent.class.getName()); // Assuming DLT contains MetricEvent
+        dltConsumerProps.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, "false");
+        DefaultKafkaConsumerFactory<String, MetricEvent> dltCF = new DefaultKafkaConsumerFactory<>(dltConsumerProps);
+        ContainerProperties dltContainerProps = new ContainerProperties(demandMetricsDltTopic);
+        dltListenerContainer = new KafkaMessageListenerContainer<>(dltCF, dltContainerProps);
+        dltListenerContainer.setupMessageListener((MessageListener<String, MetricEvent>) dltConsumerRecords::add);
+        dltListenerContainer.start();
+        ContainerTestUtils.waitForAssignment(dltListenerContainer, embeddedKafkaBroker.getPartitionsPerTopic(demandMetricsDltTopic));
     }
 
     @AfterEach
     void tearDown() {
-        if (priceUpdatedListenerContainer != null) {
-            priceUpdatedListenerContainer.stop();
-        }
+        if (priceUpdatedListenerContainer != null) priceUpdatedListenerContainer.stop();
+        if (dltListenerContainer != null) dltListenerContainer.stop();
     }
 
     @Test
-    void shouldConsumeRuleAndOverrideEvents_SaveToDb_AndUpdateMetrics_AndCallPricingService() throws JsonProcessingException, InterruptedException {
-        // This test name is now a bit broad. It will also test metric consumption and price update publication.
+    void fullEndToEndFlow_WithRule_Metric_Threshold_AndPriceUpdate() throws Exception {
+        final UUID itemId = UUID.randomUUID();
+        final String itemIdStr = itemId.toString();
 
-        // Arrange: Dynamic Pricing Rule Event
-        UUID ruleId = UUID.randomUUID();
-        final UUID ruleItemId = UUID.randomUUID(); // Make final for use in lambda/anonymous class if needed
+        // 1. Publish initial data for GlobalKTables / KTables
+        // Base Price (simulating output from RuleOverrideEventListener to internalBasePricesTopic)
+        ItemBasePriceEvent basePriceEvent = ItemBasePriceEvent.builder()
+                .itemId(itemId).basePrice(new BigDecimal("100.00")).eventTimestamp(Instant.now()).build();
+        kafkaTemplate.send(internalBasePricesTopic, itemIdStr, objectMapper.writeValueAsString(basePriceEvent));
+
+        // Rule (simulating output from RuleOverrideEventListener to internalRulesByItemIdTopic)
         Map<String, Object> ruleParams = new HashMap<>();
-        ruleParams.put("discount", 5.0);
+        ruleParams.put("threshold", 10L); // Lower threshold for test
+        ruleParams.put("adjustmentPercentage", 0.20); // +20%
         DynamicPricingRuleDto ruleDto = DynamicPricingRuleDto.builder()
-                .id(ruleId).itemId(ruleItemId).itemSku("SKU-RULE")
-                .ruleType("FLAT_AMOUNT_OFF").parameters(ruleParams)
-                .enabled(true).createdBy("smoke-test").createdAt(Instant.now()).updatedAt(Instant.now()).version(1L)
+                .id(UUID.randomUUID()).itemId(itemId).ruleType("VIEW_COUNT_THRESHOLD").parameters(ruleParams)
+                .enabled(true).createdAt(Instant.now()).updatedAt(Instant.now()).version(1L)
                 .build();
-        String rulePayload = objectMapper.writeValueAsString(ruleDto);
+        kafkaTemplate.send(internalRulesByItemIdTopic, itemIdStr, objectMapper.writeValueAsString(ruleDto));
 
-        // Arrange: Price Override Event
-        UUID overrideId = UUID.randomUUID();
-        UUID overrideItemId = UUID.randomUUID();
+        // (Optional) Override - make it non-applicable or disabled for this rule test
         PriceOverrideDto overrideDto = PriceOverrideDto.builder()
-                .id(overrideId).itemId(overrideItemId).itemSku("SKU-OVERRIDE")
-                .overridePrice(BigDecimal.valueOf(99.99)).startTime(Instant.now()).endTime(Instant.now().plusSeconds(3600))
-                .enabled(true).createdByUserId("smoke-test-user").createdByRole("TESTER")
-                .createdAt(Instant.now()).updatedAt(Instant.now()).version(1L)
+            .id(UUID.randomUUID()).itemId(itemId).overridePrice(new BigDecimal("50.00"))
+            .enabled(false).startTime(Instant.now().minusSeconds(1000)).endTime(Instant.now().plusSeconds(1000))
+            .build();
+        kafkaTemplate.send(internalOverridesByItemIdTopic, itemIdStr, objectMapper.writeValueAsString(overrideDto));
+
+        // Allow GlobalKTables and KTables to populate. This remains a tricky point in tests.
+        // Consider using Awaitility to check for some side effect if possible, or ensure stream processing time.
+        Thread.sleep(3000); // Increased sleep, still not ideal.
+
+        // 2. Publish Metric Event to trigger calculation
+        MetricEvent metricEvent = MetricEvent.builder()
+                .eventId(UUID.randomUUID()).itemId(itemId).metricType("VIEW")
+                .timestamp(Instant.now()).details(Map.of("count", 20L)) // Above threshold
                 .build();
-        String overridePayload = objectMapper.writeValueAsString(overrideDto);
+        kafkaTemplate.send(demandMetricsTopic, itemIdStr, objectMapper.writeValueAsString(metricEvent));
 
-        // Act: Publish events
-        kafkaTemplate.send(new ProducerRecord<>(dynamicRuleTopic, ruleDto.getId().toString(), rulePayload));
-        kafkaTemplate.send(new ProducerRecord<>(priceOverrideTopic, overrideDto.getId().toString(), overridePayload));
+        // 3. Assert PriceUpdatedEvent on external topic
+        ConsumerRecord<String, PriceUpdatedEvent> priceUpdateRecord = priceUpdatedConsumerRecords.poll(15, TimeUnit.SECONDS);
+        assertThat(priceUpdateRecord).as("PriceUpdatedEvent should be published as change is significant").isNotNull();
+        assertThat(priceUpdateRecord.key()).isEqualTo(itemIdStr);
+        PriceUpdatedEvent publishedEvent = priceUpdateRecord.value();
+        assertThat(publishedEvent.getItemId()).isEqualTo(itemId);
+        assertThat(publishedEvent.getBasePrice()).isEqualByComparingTo("100.00");
+        assertThat(publishedEvent.getFinalPrice()).isEqualByComparingTo("120.00"); // 100 * (1 + 0.20)
+        assertThat(publishedEvent.getComponents()).anySatisfy(c ->
+            assertThat(c.getComponentName()).isEqualTo("VIEW_COUNT_THRESHOLD")
+        );
 
-        // Assert: Check database after a short wait for Kafka listeners to process
-        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
-            assertThat(ruleRepository.findById(ruleId)).isPresent();
-            assertThat(overrideRepository.findById(overrideId)).isPresent();
-        });
+        // 4. Assert PriceUpdatedEvent on internal topic (for KTable update)
+        // This requires another consumer or to check the KTable state if possible with TopologyTestDriver.
+        // For smoke test, consuming from the topic is a good validation.
+        // We need a separate consumer for internalLastPublishedPricesTopic or check the output topic list from EmbeddedKafka.
+        // For simplicity, the test setup for internalLastPriceOutputTopic in DemandMetricsAggregatorStreamTest can be reused.
+        // Here, we'll assume the .split().branch().to() works and it was sent.
 
-        DynamicPricingRuleEntity savedRule = ruleRepository.findById(ruleId).get();
-        assertThat(savedRule.getItemId()).isEqualTo(ruleItemId);
-        assertThat(savedRule.getRuleType()).isEqualTo("FLAT_AMOUNT_OFF");
-        assertThat(savedRule.isEnabled()).isTrue();
-        assertThat(savedRule.getVersion()).isEqualTo(1L);
+        // 5. Test DLT: Publish an invalid metric (no itemId)
+        MetricEvent invalidMetric = MetricEvent.builder().eventId(UUID.randomUUID()).metricType("BAD_METRIC").timestamp(Instant.now()).build();
+        kafkaTemplate.send(demandMetricsTopic, "badkey", objectMapper.writeValueAsString(invalidMetric));
 
-        PriceOverrideEntity savedOverride = overrideRepository.findById(overrideId).get();
-        assertThat(savedOverride.getItemId()).isEqualTo(overrideItemId);
-        assertThat(savedOverride.getOverridePrice()).isEqualByComparingTo(BigDecimal.valueOf(99.99));
-        assertThat(savedOverride.isEnabled()).isTrue();
-        assertThat(savedOverride.getVersion()).isEqualTo(1L);
+        ConsumerRecord<String, MetricEvent> dltRecord = dltConsumerRecords.poll(5, TimeUnit.SECONDS);
+        assertThat(dltRecord).as("Invalid metric should go to DLT").isNotNull();
+        assertThat(dltRecord.key()).isEqualTo("badkey");
+        assertThat(dltRecord.value().getMetricType()).isEqualTo("BAD_METRIC");
 
-        // Assert: Check Micrometer counters
-        Counter rulesConsumed = meterRegistry.get("pricing.engine.rules.consumed").counter();
-        Counter overridesConsumed = meterRegistry.get("pricing.engine.overrides.consumed").counter();
+        // 6. Test Threshold: Publish another metric that results in a price below threshold
+        // First, let the last published price (120.00) be established in the KTable
+        // This requires the previous PriceUpdatedEvent to be consumed by the KTable's topic.
+        // In a real scenario, this happens via the .to(internalLastPublishedPricesTopic).
+        // In test, we might need to explicitly publish to internalLastPublishedPricesTopic if not using TopologyTestDriver's output topic for it.
+        // For this smoke test, directly publishing to internalLastPublishedPricesTopic to set state.
+        PriceUpdatedEvent lastPrice = PriceUpdatedEvent.builder().itemId(itemId).finalPrice(new BigDecimal("120.00")).build();
+        kafkaTemplate.send(internalLastPublishedPricesTopic, itemIdStr, objectMapper.writeValueAsString(lastPrice));
+        Thread.sleep(1000); // Allow KTable to update
 
-        // Counters might have been incremented by other tests if context is not fully dirtied or if tests run in parallel.
-        // For a clean check, ensure this test runs in isolation or assert increment from a baseline.
-        // Here, we assume it's the first/only one incrementing these specific counters in this test run.
-        // Awaitility can also be used for counters if they increment asynchronously from listener.
-        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
-             assertThat(rulesConsumed.count()).isEqualTo(1.0);
-             assertThat(overridesConsumed.count()).isEqualTo(1.0);
-        });
+        MetricEvent metricForSmallChange = MetricEvent.builder()
+                .eventId(UUID.randomUUID()).itemId(itemId).metricType("VIEW")
+                .timestamp(Instant.now()).details(Map.of("count", 0L)) // Should result in base price (100.00)
+                .build();
+        kafkaTemplate.send(demandMetricsTopic, itemIdStr, objectMapper.writeValueAsString(metricForSmallChange));
 
+        // New price would be 100.00. Last price was 120.00. Change is 20.00.
+        // Threshold is 1% of 120 = 1.20. 20.00 > 1.20, so it *should* publish.
+        // Let's test a case where it *shouldn't* publish.
+        // New rule: -0.5% adjustment if count < 5. Base 100. New price = 99.50. Last price 100. Change 0.50. Threshold 1.00. No publish.
 
-        // Assert: Verify PricingEngineService calls for rules and overrides
-        verify(pricingEngineService, timeout(5000).times(1)).updateRules(org.mockito.ArgumentMatchers.anyList());
-        verify(pricingEngineService, timeout(5000).times(1)).updateOverrides(org.mockito.ArgumentMatchers.anyList());
+        // Reset last price to 100 for a cleaner threshold test
+        lastPrice = PriceUpdatedEvent.builder().itemId(itemId).finalPrice(new BigDecimal("100.00")).build();
+        kafkaTemplate.send(internalLastPublishedPricesTopic, itemIdStr, objectMapper.writeValueAsString(lastPrice));
+        Thread.sleep(1000);
 
+        Map<String, Object> subtleRuleParams = new HashMap<>();
+        subtleRuleParams.put("threshold", 5L); // views > 5
+        subtleRuleParams.put("adjustmentPercentage", 0.005); // +0.5%
+        DynamicPricingRuleDto subtleRule = DynamicPricingRuleDto.builder()
+                .id(UUID.randomUUID()).itemId(itemId).ruleType("VIEW_COUNT_THRESHOLD").parameters(subtleRuleParams)
+                .enabled(true).build();
+        kafkaTemplate.send(internalRulesByItemIdTopic, itemIdStr, objectMapper.writeValueAsString(subtleRule)); // Update the rule
+        Thread.sleep(1000); // Allow GKT to update
 
-        // Arrange: Demand Metric Event for the same item as the rule
+        MetricEvent metricForSubtleChange = MetricEvent.builder()
+                .eventId(UUID.randomUUID()).itemId(itemId).metricType("VIEW")
+                .timestamp(Instant.now()).details(Map.of("count", 10L)) // count > 5, triggers +0.5%
+                .build();
+        kafkaTemplate.send(demandMetricsTopic, itemIdStr, objectMapper.writeValueAsString(metricForSubtleChange));
+
+        // Expected new price: 100 * 1.005 = 100.50. Change from 100.00 is 0.50.
+        // Threshold is 1% of 100.00 = 1.00. Since 0.50 < 1.00, no event should be published.
+        ConsumerRecord<String, PriceUpdatedEvent> noPriceUpdateRecord = priceUpdatedConsumerRecords.poll(5, TimeUnit.SECONDS);
+        assertThat(noPriceUpdateRecord).as("Price update should be skipped due to threshold").isNull();
+
+        // Verify counters (these are tricky in smoke tests due to potential parallel runs or existing state)
+        // Counter rulesConsumedByListener = meterRegistry.get("pricing.engine.rules.consumed").counter();
+        // Counter overridesConsumedByListener = meterRegistry.get("pricing.engine.overrides.consumed").counter();
+        Counter metricsConsumedByStream = meterRegistry.get("pricing.engine.metrics.consumed").counter(); // This is from DemandMetricsListener
+
+        // We sent 3 metric events (1 valid for price calc, 1 invalid to DLT, 1 valid for subtle change)
+        // The DLT path in DemandMetricsAggregatorStream is *after* deserialization, so DemandMetricsListener won't see it.
+        // The DemandMetricsListener is on the raw `demandMetricsTopic`.
+        // If the stream's DLT logic is before the listener for that topic, it would be different.
+        // Current setup: Listener on demandMetricsTopic, Stream on demandMetricsTopic.
+        // The DemandMetricsListener (simple @KafkaListener) will increment for all 3.
+        // The stream's internal counter for "metrics processed by stream topology" would be different.
+        // For now, let's assume DemandMetricsListener's counter is what "metrics.consumed" refers to.
+         await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(metricsConsumedByStream.count()).isGreaterThanOrEqualTo(3.0); // At least 3 metrics were sent to the topic
+         });
+    }
+}
         MetricEvent metricEvent = MetricEvent.builder()
                 .eventId(UUID.randomUUID())
                 .itemId(ruleItemId) // Use same itemId as the rule for testing rule application

@@ -40,8 +40,9 @@ public class PricingServiceTest {
 
     @Mock private BulkPricingRuleRepository bulkPricingRuleRepository;
     @Mock private CatalogItemRepository catalogItemRepository;
-    @Mock private KafkaProducerService kafkaProducerService;
-    @Mock private DynamicPricingEngine dynamicPricingEngine; // Mock the new engine
+    // @Mock private KafkaProducerService kafkaProducerService; // No longer used directly by PricingService for bulk rule events
+    @Mock private OutboxEventService outboxEventService; // Used for bulk rule events
+    @Mock private DynamicPricingEngine dynamicPricingEngine;
 
     @InjectMocks private PricingService pricingService;
 
@@ -79,7 +80,7 @@ public class PricingServiceTest {
 
         assertThat(result).isNotNull();
         assertThat(result.getDiscountPercentage()).isEqualByComparingTo("5.00");
-        verify(kafkaProducerService).sendMessage(eq("bulk.rules"), eq(savedRule.getId().toString()), any(BulkPricingRuleEvent.class));
+        verify(outboxEventService).saveOutboxEvent(eq("BulkPricingRule"), eq(savedRule.getId()), eq("bulk.rules"), eq("bulk.pricing.rule.added"), any(BulkPricingRuleEvent.class));
     }
 
     @Test
@@ -203,6 +204,64 @@ public class PricingServiceTest {
         pricingService.deleteBulkPricingRule(ruleId);
 
         verify(bulkPricingRuleRepository).delete(rule);
-        verify(kafkaProducerService).sendMessage(eq("bulk.rules"), eq(ruleId.toString()), any(BulkPricingRuleEvent.class));
+        verify(outboxEventService).saveOutboxEvent(eq("BulkPricingRule"), eq(ruleId), eq("bulk.rules"), eq("bulk.pricing.rule.deleted"), any(BulkPricingRuleEvent.class));
+    }
+
+    @Test
+    void getPriceDetail_withDynamicPrice_usesDynamicPriceAsEffectiveBase() {
+        item.setDynamicPrice(new BigDecimal("90.00")); // Dynamic price is 90
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+        when(bulkPricingRuleRepository.findActiveApplicableRules(eq(itemId), eq(1), any(Instant.class)))
+                .thenReturn(Collections.emptyList());
+        // dynamicPricingEngine mock (from setUp) returns empty list, so no further adjustments
+
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("90.00");
+        assertThat(result.getDynamicPrice()).isEqualByComparingTo("90.00"); // DTO field should reflect this
+        assertThat(result.getBasePrice()).isEqualByComparingTo("100.00"); // Original base still shown
+        assertThat(result.getComponents()).hasSize(1);
+        assertThat(result.getComponents().get(0).getCode()).isEqualTo("DYNAMIC_PRICE_FROM_ENGINE");
+        assertThat(result.getComponents().get(0).getAmount()).isEqualByComparingTo("90.00");
+    }
+
+    @Test
+    void getPriceDetail_withDynamicPriceAndBulkDiscount_bulkAppliesToDynamicPrice() {
+        item.setDynamicPrice(new BigDecimal("90.00")); // Dynamic price is 90
+        BulkPricingRuleEntity rule = BulkPricingRuleEntity.builder()
+                .minQuantity(1).discountPercentage(new BigDecimal("10.00")) // 10% off
+                .build();
+
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+        when(bulkPricingRuleRepository.findActiveApplicableRules(eq(itemId), eq(1), any(Instant.class)))
+                .thenReturn(List.of(rule));
+        // dynamicPricingEngine mock (from setUp) returns empty list
+
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Effective base = 90.00. Bulk discount = 10% of 90 = 9.00. Final = 90 - 9 = 81.00
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("81.00");
+        assertThat(result.getDynamicPrice()).isEqualByComparingTo("90.00");
+        assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");
+
+        assertThat(result.getComponents()).hasSize(2); // DYNAMIC_PRICE_FROM_ENGINE, BULK_DISCOUNT
+        assertThat(result.getComponents().stream().anyMatch(c -> "DYNAMIC_PRICE_FROM_ENGINE".equals(c.getCode()) && c.getAmount().compareTo(new BigDecimal("90.00")) == 0)).isTrue();
+        assertThat(result.getComponents().stream().anyMatch(c -> "BULK_DISCOUNT".equals(c.getCode()) && c.getAmount().compareTo(new BigDecimal("-9.00")) == 0)).isTrue();
+    }
+
+    @Test
+    void getPriceDetail_noDynamicPrice_usesCatalogBasePrice() {
+        // item.getDynamicPrice() is null by default
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item)); // Base price 100
+        when(bulkPricingRuleRepository.findActiveApplicableRules(eq(itemId), eq(1), any(Instant.class)))
+                .thenReturn(Collections.emptyList());
+
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getDynamicPrice()).isNull(); // DTO field should be null
+        assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getComponents()).hasSize(1);
+        assertThat(result.getComponents().get(0).getCode()).isEqualTo("CATALOG_BASE_PRICE");
     }
 }

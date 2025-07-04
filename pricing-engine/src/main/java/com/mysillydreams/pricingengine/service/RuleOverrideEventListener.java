@@ -31,14 +31,21 @@ import org.springframework.stereotype.Service;
 public class RuleOverrideEventListener {
 
     private final ObjectMapper objectMapper;
-    private final KafkaTemplate<String, Object> kafkaTemplate; // Generic template for internal topics
+    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final MeterRegistry meterRegistry;
 
-    @Value("${topics.internalRules}")
-    private String internalRulesTopic;
+    // Old topics keyed by ruleId/overrideId - will be removed or repurposed.
+    // For now, removing the @Value injection for them if they are no longer primary targets.
+    // @Value("${topics.internalRules}")
+    // private String internalRulesTopic;
+    // @Value("${topics.internalOverrides}")
+    // private String internalOverridesTopic;
 
-    @Value("${topics.internalOverrides}")
-    private String internalOverridesTopic;
+    @Value("${topics.internalRulesByItemId}")
+    private String internalRulesByItemIdTopic;
+
+    @Value("${topics.internalOverridesByItemId}")
+    private String internalOverridesByItemIdTopic;
 
     @Value("${topics.internalBasePrices}")
     private String internalBasePricesTopic;
@@ -91,15 +98,17 @@ public class RuleOverrideEventListener {
             if (ruleDto.getId() != null) { // Ensure ID is present for keying
                  // If ruleDto.isEnabled() is false, it means the rule is no longer active.
                  // For GlobalKTable, we still publish it. The streams joining logic will filter by enabled status.
-                 // Alternatively, if an event means "deleted", we'd send a tombstone:
-                 // kafkaTemplate.send(internalRulesTopic, ruleDto.getId().toString(), null);
-                kafkaTemplate.send(internalRulesTopic, ruleDto.getId().toString(), ruleDto);
-                log.info("Published DynamicPricingRuleDto (ID: {}) to internal topic: {}", ruleDto.getId(), internalRulesTopic);
+                 // To signal a delete for a KTable, a null value (tombstone) is typically sent with the key.
+                // If catalog-service sends a "deleted" event type, we'd handle that by sending a tombstone here.
+                // For now, assuming updates include enabled status.
+                kafkaTemplate.send(internalRulesByItemIdTopic, ruleDto.getItemId().toString(), ruleDto);
+                log.info("Published DynamicPricingRuleDto (RuleID: {}, ItemID: {}) to item-keyed topic: {}",
+                         ruleDto.getId(), ruleDto.getItemId(), internalRulesByItemIdTopic);
 
-                // Publish placeholder base price event
+                // Publish placeholder base price event (keyed by itemId)
                 publishPlaceholderBasePriceEvent(ruleDto.getItemId());
             } else {
-                log.warn("Received rule DTO without an ID: {}", ruleDto);
+                log.warn("Received rule DTO without an ID or ItemID: {}", ruleDto);
             }
 
         } catch (JsonProcessingException e) {
@@ -123,16 +132,16 @@ public class RuleOverrideEventListener {
             log.info("Deserialized price override event for override ID: {}, Item ID: {}", overrideDto.getId(), overrideDto.getItemId());
             overridesConsumedCounter.increment();
 
-            if (overrideDto.getId() != null) {
-                // Publish to internal topic, similar logic as rules.
-                // Streams will filter by enabled and time window.
-                kafkaTemplate.send(internalOverridesTopic, overrideDto.getId().toString(), overrideDto);
-                log.info("Published PriceOverrideDto (ID: {}) to internal topic: {}", overrideDto.getId(), internalOverridesTopic);
+            if (overrideDto.getId() != null && overrideDto.getItemId() != null) {
+                // Publish to internal topic, keyed by itemId.
+                kafkaTemplate.send(internalOverridesByItemIdTopic, overrideDto.getItemId().toString(), overrideDto);
+                log.info("Published PriceOverrideDto (OverrideID: {}, ItemID: {}) to item-keyed topic: {}",
+                         overrideDto.getId(), overrideDto.getItemId(), internalOverridesByItemIdTopic);
 
-                // Publish placeholder base price event
+                // Publish placeholder base price event (keyed by itemId)
                 publishPlaceholderBasePriceEvent(overrideDto.getItemId());
             } else {
-                log.warn("Received override DTO without an ID: {}", overrideDto);
+                log.warn("Received override DTO without an ID or ItemID: {}", overrideDto);
             }
 
         } catch (JsonProcessingException e) {

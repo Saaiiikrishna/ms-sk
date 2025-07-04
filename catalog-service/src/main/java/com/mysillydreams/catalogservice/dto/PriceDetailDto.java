@@ -22,6 +22,7 @@ public class PriceDetailDto {
 
     private BigDecimal basePrice;           // Original base price of the item from CatalogItemEntity
     private BigDecimal overridePrice;       // Nullable. If an admin/manual price override is active for this item.
+    private BigDecimal dynamicPrice;        // Nullable. If a dynamic price from the pricing engine is active.
 
     private List<PricingComponent> components; // Ordered list of all adjustments (discounts, surcharges)
                                             // The base/override price might also be represented as a component.
