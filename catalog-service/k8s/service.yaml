@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: default # Or your target namespace
+  labels:
+    app: catalog-service
+spec:
+  type: ClusterIP # Default, for internal communication within the K8s cluster
+  # Use LoadBalancer or NodePort if you need to expose it externally directly (usually done via Ingress)
+  # type: LoadBalancer
+  ports:
+    - port: 80 # Port the service will be available on within the cluster
+      targetPort: http # Matches the containerPort name (or number 8082) in the Deployment
+      protocol: TCP
+      name: http
+  selector:
+    app: catalog-service # Must match the labels of the Pods/Deployment
+---
+# Example Ingress resource (if using an Ingress controller like NGINX or Traefik)
+# This would typically be in a separate file or managed by an Ingress controller setup.
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: catalog-service-ingress
+#   namespace: default # Or your target namespace
+#   annotations:
+#     # Annotations specific to your Ingress controller
+#     # nginx.ingress.kubernetes.io/rewrite-target: /
+#     # traefik.ingress.kubernetes.io/router.middlewares: "default-stripprefix@kubernetescrd"
+# spec:
+#   rules:
+#     - http:
+#         paths:
+#           - path: /catalog # External path
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: catalog-service
+#                 port:
+#                   number: 80 # Port of the catalog-service K8s Service
+  # tls: # Optional: for HTTPS
+  #   - hosts:
+  #       - your.domain.com
+  #     secretName: catalog-tls-secret # K8s secret containing TLS cert and key
