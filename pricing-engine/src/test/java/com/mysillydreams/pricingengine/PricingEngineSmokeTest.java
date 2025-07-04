@@ -4,12 +4,16 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mysillydreams.pricingengine.dto.MetricEvent;
 import com.mysillydreams.pricingengine.dto.PriceUpdatedEvent;
-import com.mysillydreams.pricingengine.domain.DynamicPricingRuleEntity;
-import com.mysillydreams.pricingengine.domain.PriceOverrideEntity;
+import com.mysillydreams.pricingengine.dto.ItemBasePriceEvent; // Added
+// Domain entities no longer directly asserted here as RuleOverrideEventListener doesn't save to DB
+// import com.mysillydreams.pricingengine.domain.DynamicPricingRuleEntity;
+// import com.mysillydreams.pricingengine.domain.PriceOverrideEntity;
 import com.mysillydreams.pricingengine.dto.DynamicPricingRuleDto;
 import com.mysillydreams.pricingengine.dto.PriceOverrideDto;
-import com.mysillydreams.pricingengine.repository.DynamicPricingRuleRepository;
-import com.mysillydreams.pricingengine.repository.PriceOverrideRepository;
+// Repositories no longer asserted here directly for rules/overrides
+// import com.mysillydreams.pricingengine.repository.DynamicPricingRuleRepository;
+// import com.mysillydreams.pricingengine.repository.PriceOverrideRepository;
+import com.mysillydreams.pricingengine.service.DefaultPricingEngineService; // For spy
 import com.mysillydreams.pricingengine.service.PricingEngineService;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -60,10 +64,13 @@ import static org.mockito.Mockito.verify;
 @Testcontainers
 @EmbeddedKafka(
         partitions = 1,
-        // Topics defined in application-test.yml or defaults from application.yml if not overridden
-        topics = {"${topics.dynamicRule}", "${topics.priceOverride}", "${topics.demandMetrics}"}
+        topics = {
+            "${topics.dynamicRule}", "${topics.priceOverride}", "${topics.demandMetrics}",
+            "${topics.internalRules}", "${topics.internalOverrides}", "${topics.internalBasePrices}",
+            "${topics.priceUpdated}", "${topics.demandMetricsDlt}"
+        }
 )
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS) // Ensures Kafka broker is reset
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public class PricingEngineSmokeTest {
 
     @Container
@@ -95,14 +102,13 @@ public class PricingEngineSmokeTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Autowired
-    private DynamicPricingRuleRepository ruleRepository;
+    // Repositories for rules/overrides are no longer directly relevant for assertions here
+    // as RuleOverrideEventListener doesn't save to DB anymore.
+    // @Autowired private DynamicPricingRuleRepository ruleRepository;
+    // @Autowired private PriceOverrideRepository overrideRepository;
 
-    @Autowired
-    private PriceOverrideRepository overrideRepository;
-
-    @SpyBean // Using SpyBean to verify interactions on the actual bean instance
-    private PricingEngineService pricingEngineService;
+    @SpyBean
+    private DefaultPricingEngineService pricingEngineService; // Spy on the concrete class for its methods
 
     @Autowired
     private MeterRegistry meterRegistry;
@@ -111,7 +117,7 @@ public class PricingEngineSmokeTest {
     private String dynamicRuleTopic;
 
     @Value("${topics.priceOverride}")
-    private String priceOverrideTopic;
+    private String externalPriceOverrideTopic; // Renamed to avoid conflict with internal
 
     @Value("${topics.demandMetrics}")
     private String demandMetricsTopic;
@@ -119,19 +125,27 @@ public class PricingEngineSmokeTest {
     @Value("${topics.priceUpdated}")
     private String priceUpdatedTopic;
 
-    private KafkaTemplate<String, String> kafkaTemplate;
+    @Value("${topics.internalRules}")
+    private String internalRulesTopic;
+    @Value("${topics.internalOverrides}")
+    private String internalOverridesTopic;
+    @Value("${topics.internalBasePrices}")
+    private String internalBasePricesTopic;
+    @Value("${topics.demandMetricsDlt}")
+    private String demandMetricsDltTopic;
+
+
+    private KafkaTemplate<String, String> kafkaTemplate; // For sending raw JSON strings
     private KafkaMessageListenerContainer<String, PriceUpdatedEvent> priceUpdatedListenerContainer;
     private BlockingQueue<ConsumerRecord<String, PriceUpdatedEvent>> priceUpdatedConsumerRecords;
 
 
     @BeforeEach
     void setUp() {
-        // Producer setup
         Map<String, Object> producerProps = KafkaTestUtils.producerProps(embeddedKafkaBroker);
         DefaultKafkaProducerFactory<String, String> pf = new DefaultKafkaProducerFactory<>(producerProps);
         kafkaTemplate = new KafkaTemplate<>(pf);
 
-        // Consumer setup for priceUpdatedTopic
         priceUpdatedConsumerRecords = new LinkedBlockingQueue<>();
         Map<String, Object> consumerProps = KafkaTestUtils.consumerProps("smokeTestPriceUpdatedConsumer", "true", embeddedKafkaBroker);
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, org.apache.kafka.common.serialization.StringDeserializer.class);
@@ -140,19 +154,14 @@ public class PricingEngineSmokeTest {
         consumerProps.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PriceUpdatedEvent.class.getName());
         consumerProps.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, "false");
 
-        DefaultKafkaConsumerFactory<String, PriceUpdatedEvent> priceUpdatedCF =
-                new DefaultKafkaConsumerFactory<>(consumerProps);
-
+        DefaultKafkaConsumerFactory<String, PriceUpdatedEvent> priceUpdatedCF = new DefaultKafkaConsumerFactory<>(consumerProps);
         ContainerProperties priceUpdatedContainerProps = new ContainerProperties(priceUpdatedTopic);
         priceUpdatedListenerContainer = new KafkaMessageListenerContainer<>(priceUpdatedCF, priceUpdatedContainerProps);
         priceUpdatedListenerContainer.setupMessageListener((MessageListener<String, PriceUpdatedEvent>) priceUpdatedConsumerRecords::add);
         priceUpdatedListenerContainer.start();
         ContainerTestUtils.waitForAssignment(priceUpdatedListenerContainer, embeddedKafkaBroker.getPartitionsPerTopic(priceUpdatedTopic));
 
-
-        // Clean repositories before each test
-        ruleRepository.deleteAll();
-        overrideRepository.deleteAll();
+        // No direct DB cleanup for rules/overrides as they are not persisted by this service anymore
     }
 
     @AfterEach

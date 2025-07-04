@@ -40,10 +40,18 @@ kafka:
 # For local development, you might provide defaults here or in a profile-specific yml.
 # Example: topics.dynamicRule: ${DYNAMIC_RULE_TOPIC_NAME:dynamic.pricing.rule.events}
 topics:
-  dynamicRule: ${KAFKA_TOPIC_DYNAMIC_RULE:dynamic.pricing.rule.events} # Using env var with default
-  priceOverride: ${KAFKA_TOPIC_PRICE_OVERRIDE:price.override.events} # Using env var with default
-  demandMetrics: ${KAFKA_TOPIC_DEMAND_METRICS:demand.metrics}       # Using env var with default
-  priceUpdated: ${KAFKA_TOPIC_PRICE_UPDATED:catalog.price.updated} # Topic for publishing price updates
+  # Consumed from Catalog Service
+  dynamicRule: ${KAFKA_TOPIC_DYNAMIC_RULE:dynamic.pricing.rule.events}
+  priceOverride: ${KAFKA_TOPIC_PRICE_OVERRIDE:price.override.events}
+  demandMetrics: ${KAFKA_TOPIC_DEMAND_METRICS:demand.metrics}
+  # Published by Pricing Engine
+  priceUpdated: ${KAFKA_TOPIC_PRICE_UPDATED:catalog.price.updated}
+  # Internal topics for GlobalKTables
+  internalRules: ${KAFKA_TOPIC_INTERNAL_RULES:internal.rules.v1}
+  internalOverrides: ${KAFKA_TOPIC_INTERNAL_OVERRIDES:internal.overrides.v1}
+  internalBasePrices: ${KAFKA_TOPIC_INTERNAL_BASE_PRICES:internal.item.baseprices.v1}
+  # DLT Topics
+  demandMetricsDlt: ${KAFKA_TOPIC_DEMAND_METRICS_DLT:demand.metrics.dlt}
 
 management:
   endpoints:
@@ -53,6 +61,15 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+
+# Pricing Engine specific configurations
+pricing:
+  engine:
+    update:
+      threshold:
+        percentage: 0.01 # 1% change
+        # amount: 0.50 # Example: 50 cents (can use one or both)
+        # To disable a threshold, comment it out or set to a very large/small value
 
 server:
   port: 8081 # Different from catalog-service (8082) and other services
@@ -86,3 +103,7 @@ topics:
   priceOverride: price.override.events   # Direct value for test profile
   demandMetrics: demand.metrics.test     # Different topic for test isolation if needed
   priceUpdated: catalog.price.updated.test # Test topic for price updates
+  internalRules: internal.rules.v1.test
+  internalOverrides: internal.overrides.v1.test
+  internalBasePrices: internal.item.baseprices.v1.test
+  demandMetricsDlt: demand.metrics.dlt.test
