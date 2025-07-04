@@ -12,6 +12,7 @@ import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -30,7 +31,12 @@ public class PriceOverrideService {
 
     private final PriceOverrideRepository overrideRepository;
     private final CatalogItemRepository itemRepository;
-    // private final OutboxEventService outboxEventService; // TODO: If override changes need to publish events
+    private final OutboxEventService outboxEventService;
+
+    @Value("${kafka.topics.priceOverride}")
+    private String priceOverrideEventsTopic;
+
+    private static final String AGGREGATE_TYPE_PRICE_OVERRIDE = "PriceOverride";
 
     @Transactional
     public PriceOverrideDto createOverride(CreatePriceOverrideRequest request, String userId, String userRole) {
@@ -54,9 +60,16 @@ public class PriceOverrideService {
 
         PriceOverrideEntity savedOverride = overrideRepository.save(override);
         log.info("Price override created with ID: {}", savedOverride.getId());
-        // TODO: Publish event
-        // outboxEventService.saveOutboxEvent("PriceOverride", savedOverride.getId(), "price.override.created", "price-override-events-topic", convertToDto(savedOverride));
-        return convertToDto(savedOverride);
+
+        PriceOverrideDto overrideDto = convertToDto(savedOverride);
+        outboxEventService.saveOutboxEvent(
+                AGGREGATE_TYPE_PRICE_OVERRIDE,
+                savedOverride.getId(),
+                "price.override.created",
+                priceOverrideEventsTopic,
+                overrideDto
+        );
+        return overrideDto;
     }
 
     @Transactional(readOnly = true)
@@ -113,9 +126,16 @@ public class PriceOverrideService {
 
         PriceOverrideEntity updatedOverride = overrideRepository.save(override);
         log.info("Price override updated with ID: {}", updatedOverride.getId());
-        // TODO: Publish event
-        // outboxEventService.saveOutboxEvent("PriceOverride", updatedOverride.getId(), "price.override.updated", "price-override-events-topic", convertToDto(updatedOverride));
-        return convertToDto(updatedOverride);
+
+        PriceOverrideDto overrideDto = convertToDto(updatedOverride);
+        outboxEventService.saveOutboxEvent(
+                AGGREGATE_TYPE_PRICE_OVERRIDE,
+                updatedOverride.getId(),
+                "price.override.updated",
+                priceOverrideEventsTopic,
+                overrideDto
+        );
+        return overrideDto;
     }
 
     @Transactional
@@ -124,8 +144,15 @@ public class PriceOverrideService {
         PriceOverrideEntity override = overrideRepository.findById(overrideId)
                 .orElseThrow(() -> new ResourceNotFoundException("PriceOverride", "id", overrideId));
 
-        // TODO: Publish event before deleting
-        // outboxEventService.saveOutboxEvent("PriceOverride", override.getId(), "price.override.deleted", "price-override-events-topic", convertToDto(override));
+        PriceOverrideDto overrideDto = convertToDto(override);
+        outboxEventService.saveOutboxEvent(
+                AGGREGATE_TYPE_PRICE_OVERRIDE,
+                override.getId(),
+                "price.override.deleted",
+                priceOverrideEventsTopic,
+                overrideDto // Sending the DTO for consistency
+        );
+
         overrideRepository.delete(override);
         log.info("Price override deleted with ID: {}", overrideId);
     }
