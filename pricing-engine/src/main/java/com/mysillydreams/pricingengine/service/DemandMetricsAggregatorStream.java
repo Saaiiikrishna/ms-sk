@@ -48,14 +48,17 @@ public class DemandMetricsAggregatorStream {
     private String internalBasePricesTopic;
     @Value("${topics.demandMetricsDlt}")
     private String demandMetricsDltTopic;
-    @Value("${topics.internalLastPublishedPrices}") // Added
+    @Value("${topics.internalLastPublishedPrices}")
     private String internalLastPublishedPricesTopic;
-    @Value("${topics.priceUpdated}") // External topic for final price updates
+    @Value("${topics.priceUpdated}")
     private String externalPriceUpdatedTopic;
+    @Value("${topics.processingErrorsDlt}") // Added for processing errors
+    private String processingErrorsDltTopic;
 
 
     private final PricingEngineService pricingEngineService;
     private final KafkaTemplate<String, String> dltKafkaTemplate;
+    private final ObjectMapper objectMapper; // For serializing context to DLT
     private final Serde<String> stringSerde;
     private final Serde<MetricEvent> metricEventSerde;
     private final Serde<DynamicPricingRuleDto> dynamicPricingRuleDtoSerde;
@@ -68,22 +71,24 @@ public class DemandMetricsAggregatorStream {
     public DemandMetricsAggregatorStream(
             PricingEngineService pricingEngineService,
             KafkaTemplate<String, String> dltKafkaTemplate,
+            ObjectMapper objectMapper, // Added
             Serde<String> stringSerde,
             Serde<MetricEvent> metricEventSerde,
             Serde<DynamicPricingRuleDto> dynamicPricingRuleDtoSerde,
             Serde<PriceOverrideDto> priceOverrideDtoSerde,
             Serde<ItemBasePriceEvent> itemBasePriceEventSerde,
             Serde<PriceUpdatedEvent> priceUpdatedEventSerde,
-            Serde<List<DynamicPricingRuleDto>> listOfRuleDtoSerde) { // Added
+            Serde<List<DynamicPricingRuleDto>> listOfRuleDtoSerde) {
         this.pricingEngineService = pricingEngineService;
         this.dltKafkaTemplate = dltKafkaTemplate;
+        this.objectMapper = objectMapper; // Store
         this.stringSerde = stringSerde;
         this.metricEventSerde = metricEventSerde;
         this.dynamicPricingRuleDtoSerde = dynamicPricingRuleDtoSerde;
         this.priceOverrideDtoSerde = priceOverrideDtoSerde;
         this.itemBasePriceEventSerde = itemBasePriceEventSerde;
         this.priceUpdatedEventSerde = priceUpdatedEventSerde;
-        this.listOfRuleDtoSerde = listOfRuleDtoSerde; // Store
+        this.listOfRuleDtoSerde = listOfRuleDtoSerde;
     }
 
 
@@ -115,25 +120,30 @@ public class DemandMetricsAggregatorStream {
                 Materialized.<String, List<DynamicPricingRuleDto>, KeyValueStore<Bytes, byte[]>>as("aggregated-rules-by-itemid-store")
                         .withKeySerde(stringSerde)
                         .withValueSerde(listOfRuleDtoSerde)
+                        .withCachingEnabled() // Added
             );
 
-        // GlobalKTables for overrides and base prices (keyed by String(itemId))
-        // No change needed for these GKTs based on the plan for *this* step.
+        // GlobalKTables do not use .withCachingEnabled() in their Materialized definition in the same way.
+        // Caching for GlobalKTables is handled internally by Kafka Streams.
         GlobalKTable<String, PriceOverrideDto> overridesByItemIdGTable = streamsBuilder.globalTable(
                 internalOverridesByItemIdTopic,
                 Consumed.with(stringSerde, priceOverrideDtoSerde),
-                Materialized.as("overrides-by-itemid-global-store"));
+                Materialized.as("overrides-by-itemid-global-store")); // No caching config here
 
         GlobalKTable<String, ItemBasePriceEvent> basePricesGTable = streamsBuilder.globalTable(
                 internalBasePricesTopic,
                 Consumed.with(stringSerde, itemBasePriceEventSerde),
-                Materialized.as("base-prices-global-store"));
+                Materialized.as("base-prices-global-store")); // No caching config here
 
         // KTable for last published prices
         KTable<String, PriceUpdatedEvent> lastPublishedPricesKTable = streamsBuilder.table(
                 internalLastPublishedPricesTopic,
                 Consumed.with(stringSerde, priceUpdatedEventSerde),
-                Materialized.as("last-published-prices-store"));
+                Materialized.<String, PriceUpdatedEvent, KeyValueStore<Bytes, byte[]>>as("last-published-prices-store")
+                        .withKeySerde(stringSerde)
+                        .withValueSerde(priceUpdatedEventSerde)
+                        .withCachingEnabled() // Added
+                );
 
 
         KStream<String, MetricEvent> metricEventKStream = streamsBuilder
@@ -192,22 +202,32 @@ public class DemandMetricsAggregatorStream {
         KTable<Windowed<String>, Long> aggregatedCountsTable = rekeyedMetricsStream
                 .groupByKey(Grouped.with(stringSerde, metricEventSerde)) // Group by String itemId
                 .windowedBy(hoppingWindowWithGrace)
-                .count(Materialized.as("item-metric-counts-store"));
+                .count(Materialized.<String, Long, WindowStore<Bytes, byte[]>>as("item-metric-counts-store")
+                        .withKeySerde(stringSerde)
+                        .withValueSerde(Serdes.Long())
+                        .withCachingEnabled());
 
-        KStream<String, AggregatedMetric> aggregatedMetricsStream = aggregatedCountsTable.toStream()
-            .map((windowedItemId, count) -> {
-                AggregatedMetric am = AggregatedMetric.builder()
-                    .itemId(UUID.fromString(windowedItemId.key()))
-                    .metricCount(count)
-                    .windowStartTimestamp(windowedItemId.window().start())
-                    .windowEndTimestamp(windowedItemId.window().end())
-                    .build();
-                return KeyValue.pair(windowedItemId.key(), am);
-            });
+        // Suppress intermediate updates from the KTable, emitting only final results per window
+        KStream<String, AggregatedMetric> aggregatedMetricsStream = aggregatedCountsTable
+                .suppress(Suppressed.untilWindowCloses(Suppressed.BufferConfig.unbounded()))
+                .toStream()
+                .map((windowedItemId, count) -> {
+                    if (count == null) {
+                        return KeyValue.pair(windowedItemId.key(), null);
+                    }
+                    AggregatedMetric am = AggregatedMetric.builder()
+                        .itemId(UUID.fromString(windowedItemId.key()))
+                        .metricCount(count)
+                        .windowStartTimestamp(windowedItemId.window().start())
+                        .windowEndTimestamp(windowedItemId.window().end())
+                        .build();
+                    return KeyValue.pair(windowedItemId.key(), am);
+                })
+                .filter((key, value) -> value != null); // Filter out records where AggregatedMetric is null
 
         // ValueJoiner for rules list: (AggregatedMetric, List<DynamicPricingRuleDto>) -> EnrichedAggregatedMetric
         ValueJoiner<AggregatedMetric, List<DynamicPricingRuleDto>, EnrichedAggregatedMetric> rulesListJoiner =
-            (aggMetric, rulesList) -> new EnrichedAggregatedMetric(aggMetric, rulesList, null, null);
+            (aggMetric, rulesList) -> new EnrichedAggregatedMetric(aggMetric, rulesList, null, null); // rulesList can be null from leftJoin
 
         ValueJoiner<EnrichedAggregatedMetric, PriceOverrideDto, EnrichedAggregatedMetric> overrideJoiner =
             (enriched, overrideDto) -> enriched.withOverride(overrideDto);
@@ -236,16 +256,32 @@ public class DemandMetricsAggregatorStream {
             EnrichedAggregatedMetric enrichedData = enrichedWithLastPrice.getEnrichedAggregatedMetric();
             Optional<PriceUpdatedEvent> lastPriceEventOptional = enrichedWithLastPrice.getLastPriceEvent();
             Optional<BigDecimal> lastFinalPrice = lastPriceEventOptional.map(PriceUpdatedEvent::getFinalPrice);
+            UUID itemId = enrichedData.getAggregatedMetric().getItemId(); // For logging and DLT key
 
             log.info("Processing enriched data for item {}: {} with last price: {}",
-                     enrichedData.getAggregatedMetric().getItemId(), enrichedData, lastFinalPrice.orElse(null));
+                     itemId, enrichedData, lastFinalPrice.orElse(null));
 
-            Optional<PriceUpdatedEvent> potentialNewPriceEventOpt = pricingEngineService.calculatePrice(
-                enrichedData,
-                lastFinalPrice
-            );
-
-            return potentialNewPriceEventOpt.map(List::of).orElse(Collections.emptyList());
+            try {
+                Optional<PriceUpdatedEvent> potentialNewPriceEventOpt = pricingEngineService.calculatePrice(
+                    enrichedData,
+                    lastFinalPrice
+                );
+                return potentialNewPriceEventOpt.map(List::of).orElse(Collections.emptyList());
+            } catch (Exception e) {
+                log.error("Error during pricing calculation for item {}. Data: {}. Error: {}",
+                        itemId, enrichedData, e.getMessage(), e);
+                try {
+                    // Serialize the context (enrichedData or just relevant parts) to JSON string for DLT
+                    // Using enrichedWithLastPrice as it contains all context before the failing call
+                    String errorPayload = objectMapper.writeValueAsString(enrichedWithLastPrice);
+                    dltKafkaTemplate.send(processingErrorsDltTopic, itemId.toString(), errorPayload);
+                    log.info("Sent problematic enriched data for item {} to DLT [{}].", itemId, processingErrorsDltTopic);
+                } catch (Exception dltEx) {
+                    log.error("Failed to serialize or send message to DLT ({}) for item {}: {}",
+                            processingErrorsDltTopic, itemId, dltEx.getMessage(), dltEx);
+                }
+                return Collections.emptyList(); // Skip this record by returning an empty list
+            }
         })
         .peek((itemIdString, priceUpdateEvent) ->
             log.info("Threshold met for item {}. Publishing to external and internal topics: {}", itemIdString, priceUpdateEvent)

@@ -54,7 +54,8 @@ topics:
   internalOverridesByItemId: ${KAFKA_TOPIC_INTERNAL_OVERRIDES_BY_ITEMID:internal.overrides-by-itemid.v1} # Keyed by itemId (String)
   internalLastPublishedPrices: ${KAFKA_TOPIC_INTERNAL_LAST_PRICES:internal.last-published-prices.v1} # Keyed by itemId (String)
   # DLT Topics
-  demandMetricsDlt: ${KAFKA_TOPIC_DEMAND_METRICS_DLT:demand.metrics.dlt}
+  demandMetricsDlt: ${KAFKA_TOPIC_DEMAND_METRICS_DLT:demand.metrics.dlt} # For metric deserialization/validation issues
+  processingErrorsDlt: ${KAFKA_TOPIC_PROCESSING_ERRORS_DLT:processing.errors.dlt} # For errors during core processing logic
 
 management:
   endpoints:
@@ -113,3 +114,4 @@ topics:
   internalOverridesByItemId: internal.overrides-by-itemid.v1.test
   internalLastPublishedPrices: internal.last-published-prices.v1.test
   demandMetricsDlt: demand.metrics.dlt.test
+  processingErrorsDlt: processing.errors.dlt.test
