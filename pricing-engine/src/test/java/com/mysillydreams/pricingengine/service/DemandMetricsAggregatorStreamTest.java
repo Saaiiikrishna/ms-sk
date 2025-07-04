@@ -1,6 +1,10 @@
 package com.mysillydreams.pricingengine.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mysillydreams.pricingengine.dto.DynamicPricingRuleDto;
+import com.mysillydreams.pricingengine.dto.ItemBasePriceEvent;
 import com.mysillydreams.pricingengine.dto.MetricEvent;
+import com.mysillydreams.pricingengine.dto.PriceOverrideDto;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.*;
@@ -33,40 +37,84 @@ class DemandMetricsAggregatorStreamTest {
     // For this test, we'll focus on building the topology and ensuring it runs.
     // A more thorough test would require an output topic for the aggregated counts.
 
-    private final String INPUT_TOPIC_NAME = "demand.metrics.test";
-    // private final String OUTPUT_TOPIC_NAME = "aggregated.metrics.test"; // If we had an output topic
+    private final String DEMAND_METRICS_TOPIC = "demand.metrics.test";
+    private final String DEMAND_METRICS_DLT_TOPIC = "demand.metrics.dlt.test";
+    // Internal topics for GKTs - names should match those used in DemandMetricsAggregatorStream constructor for @Value
+    private final String INTERNAL_RULES_TOPIC = "internal.rules.v1.test";
+    private final String INTERNAL_OVERRIDES_TOPIC = "internal.overrides.v1.test";
+    private final String INTERNAL_BASE_PRICES_TOPIC = "internal.item.baseprices.v1.test";
+
 
     @Mock
-    private PricingEngineService pricingEngineService; // Mocked, not used directly by stream in this version
+    private PricingEngineService pricingEngineService;
+    @Mock
+    private KafkaTemplate<String, String> dltKafkaTemplate; // Mock for verifying DLT sends
 
     private DemandMetricsAggregatorStream demandMetricsAggregatorStream;
 
     private Serde<String> stringSerde = Serdes.String();
-    private JsonSerde<MetricEvent> metricEventSerde = new JsonSerde<>(MetricEvent.class);
+    private Serde<UUID> uuidSerde = Serdes.UUID(); // Ensure this is available
+    private JsonSerde<MetricEvent> metricEventSerde;
+    private JsonSerde<DynamicPricingRuleDto> ruleDtoSerde;
+    private JsonSerde<PriceOverrideDto> overrideDtoSerde;
+    private JsonSerde<ItemBasePriceEvent> basePriceEventSerde;
+
+    private TestInputTopic<String, MetricEvent> demandMetricsInputTopic;
+    private TestOutputTopic<String, MetricEvent> demandMetricsDltOutputTopic;
+    // Input topics for populating GlobalKTables
+    private TestInputTopic<UUID, DynamicPricingRuleDto> internalRulesInputTopic;
+    private TestInputTopic<UUID, PriceOverrideDto> internalOverridesInputTopic;
+    private TestInputTopic<String, ItemBasePriceEvent> internalBasePricesInputTopic;
 
 
     @BeforeEach
     void setUp() {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules(); // For proper Instant/BigDecimal handling
+        metricEventSerde = new JsonSerde<>(MetricEvent.class, objectMapper);
+        ruleDtoSerde = new JsonSerde<>(DynamicPricingRuleDto.class, objectMapper);
+        overrideDtoSerde = new JsonSerde<>(PriceOverrideDto.class, objectMapper);
+        basePriceEventSerde = new JsonSerde<>(ItemBasePriceEvent.class, objectMapper);
+
+
         Properties props = new Properties();
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "test-pricing-engine-streams");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234"); // Required, but not used by TopologyTestDriver
+        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234");
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        // Default value serde can be JsonSerde, but specific Serdes are better for typed topics
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, JsonSerde.class.getName());
-        props.put(JsonSerde.DEFAULT_VALUE_TYPE, MetricEvent.class.getName());
         props.put(JsonSerde.TRUSTED_PACKAGES, "com.mysillydreams.pricingengine.dto");
 
+        demandMetricsAggregatorStream = new DemandMetricsAggregatorStream(
+                pricingEngineService,
+                dltKafkaTemplate, // Pass the mock
+                stringSerde,
+                uuidSerde, // Pass the Serde bean
+                metricEventSerde,
+                ruleDtoSerde, // Pass specific Serdes
+                overrideDtoSerde,
+                basePriceEventSerde
+        );
+        // Manually set @Value fields for testing
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "demandMetricsTopic", DEMAND_METRICS_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalRulesTopic", INTERNAL_RULES_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalOverridesTopic", INTERNAL_OVERRIDES_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalBasePricesTopic", INTERNAL_BASE_PRICES_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "demandMetricsDltTopic", DEMAND_METRICS_DLT_TOPIC);
 
-        demandMetricsAggregatorStream = new DemandMetricsAggregatorStream(INPUT_TOPIC_NAME, pricingEngineService);
 
         StreamsBuilder builder = new StreamsBuilder();
         demandMetricsAggregatorStream.buildPipeline(builder);
         Topology topology = builder.build();
+        log.info("Topology for test:\n{}", topology.describe());
 
         testDriver = new TopologyTestDriver(topology, props);
 
-        inputTopic = testDriver.createInputTopic(INPUT_TOPIC_NAME, stringSerde.serializer(), metricEventSerde.serializer());
-        // If outputting to a topic:
-        // outputTopic = testDriver.createOutputTopic(OUTPUT_TOPIC_NAME, Serdes.String().deserializer(), Serdes.Long().deserializer());
+        demandMetricsInputTopic = testDriver.createInputTopic(DEMAND_METRICS_TOPIC, stringSerde.serializer(), metricEventSerde.serializer());
+        demandMetricsDltOutputTopic = testDriver.createOutputTopic(DEMAND_METRICS_DLT_TOPIC, stringSerde.deserializer(), metricEventSerde.deserializer());
+
+        internalRulesInputTopic = testDriver.createInputTopic(INTERNAL_RULES_TOPIC, uuidSerde.serializer(), ruleDtoSerde.serializer());
+        internalOverridesInputTopic = testDriver.createInputTopic(INTERNAL_OVERRIDES_TOPIC, uuidSerde.serializer(), overrideDtoSerde.serializer());
+        internalBasePricesInputTopic = testDriver.createInputTopic(INTERNAL_BASE_PRICES_TOPIC, stringSerde.serializer(), basePriceEventSerde.serializer());
     }
 
     @AfterEach
@@ -75,10 +123,14 @@ class DemandMetricsAggregatorStreamTest {
             testDriver.close();
         }
         metricEventSerde.close();
+        ruleDtoSerde.close();
+        overrideDtoSerde.close();
+        basePriceEventSerde.close();
+        // stringSerde and uuidSerde are from Serdes factory, no close needed.
     }
 
     @Test
-    void testMetricsAggregationWindowing() {
+    void testMetricsAggregationWindowingAndDltRouting() { // Renamed for clarity
         UUID itemId1 = UUID.randomUUID();
         UUID itemId2 = UUID.randomUUID();
         Instant baseTime = Instant.parse("2023-01-01T10:00:00Z");
@@ -106,54 +158,44 @@ class DemandMetricsAggregatorStreamTest {
 
         // For this iteration, we are mostly testing that the pipeline can be built and processes messages without error.
         // The log output from the .foreach would be visible in test logs but not programmatically asserted here.
-        // Let's try to query the state store. The store name is "item-metric-counts".
-        ReadOnlyWindowStore<UUID, Long> countStore = testDriver.getWindowStore("item-metric-counts");
+
+        // Query the state store for item-metric-counts-store
+        ReadOnlyWindowStore<UUID, Long> countStore = testDriver.getWindowStore("item-metric-counts-store"); // Corrected store name
         assertThat(countStore).isNotNull();
 
-        // Querying window stores requires a time range.
-        // Window 1: 10:00:00 - 10:04:59
-        // Check count for itemId1 in its first window
-        // Note: Window start times depend on message timestamps and window alignment.
-        // If first message is at 10:00:00, a 5-min window advancing by 1 min could be [10:00, 10:05), [10:01, 10:06) etc.
-        // The exact window start needs to be determined based on Kafka Streams windowing semantics.
-        // For TimeWindows.ofSizeWithNoGrace(5m).advanceBy(1m), windows are aligned with epoch.
-        // Example: 10:00:00 event falls into [10:00:00 - 10:04:59.999]
-        // 10:01:00 event falls into [10:00:00 - 10:04:59.999] AND [10:01:00 - 10:05:59.999] if it's a hopping window.
-        // The current code uses TimeWindows.ofSizeWithNoGrace(windowSize).advanceBy(advanceInterval) which is for hopping windows.
-
-        // Let's try to fetch values for a specific window that should contain the events
-        // The window start for an event at baseTime (10:00:00) for a 5-min window would be 10:00:00
-        Instant window1Start = baseTime;
-        Instant window1End = window1Start.plus(Duration.ofMinutes(5));
-
-        try (KeyValueIterator<Windowed<UUID>, Long> iterator = countStore.fetchAll(window1Start, window1End)) {
-            boolean foundItem1 = false;
-            boolean foundItem2 = false;
-            while (iterator.hasNext()) {
-                KeyValue<Windowed<UUID>, Long> next = iterator.next();
-                Windowed<UUID> windowedKey = next.key;
-                Long count = next.value;
-                log.info("StateStore Query: Window [{} - {}], Key: {}, Count: {}",
-                         windowedKey.window().startTime(), windowedKey.window().endTime(), windowedKey.key(), count);
-                if (windowedKey.key().equals(itemId1) && windowedKey.window().start().equals(window1Start)) {
-                    assertThat(count).isEqualTo(2L); // Two events for itemId1 in the first relevant window
-                    foundItem1 = true;
-                }
-                if (windowedKey.key().equals(itemId2) && windowedKey.window().start().equals(window1Start)) {
-                    // item2 event at 10:02:00, should also be in a window starting at 10:00:00
-                    assertThat(count).isEqualTo(1L);
-                    foundItem2 = true;
-                }
-            }
-             // These assertions are tricky because multiple hopping windows might match fetchAll.
-             // A more precise query would be fetch(key, time) to get value for a specific key at a specific time,
-             // or iterating and finding the specific window.
-             // For now, this just shows how to access the store.
+        // Example: Check count for itemId1 in its first relevant window
+        // This part remains complex due to hopping window exact time boundaries,
+        // but the principle is to verify the state store contains expected aggregated data.
+        // For simplicity, we'll just check if any records are there for now for these items.
+        // A more robust test would pinpoint exact window start/end times.
+        long itemId1Count = 0;
+        try (KeyValueIterator<Windowed<UUID>, Long> iterator = countStore.fetch(itemId1, baseTime.minus(Duration.ofMinutes(1)), baseTime.plus(Duration.ofMinutes(5)))) {
+            if(iterator.hasNext()) itemId1Count = iterator.next().value;
         }
-        // A proper assertion would require more deterministic querying of windowed state or outputting to a topic.
-        // The current test primarily verifies topology construction and basic processing.
-        // Given the .foreach logs, one would typically check logs or verify mocks if .foreach called a service.
-        // Since it doesn't call pricingEngineService directly from the stream's .foreach in the current code,
-        // we cannot verify that interaction here directly without modifying the stream.
+        assertThat(itemId1Count).isEqualTo(2L);
+
+        long itemId2Count = 0;
+        try (KeyValueIterator<Windowed<UUID>, Long> iterator = countStore.fetch(itemId2, baseTime.minus(Duration.ofMinutes(1)), baseTime.plus(Duration.ofMinutes(5)))) {
+             if(iterator.hasNext()) itemId2Count = iterator.next().value;
+        }
+        assertThat(itemId2Count).isEqualTo(1L);
+
+
+        // Test DLT routing for an event with null itemId
+        MetricEvent invalidEvent = MetricEvent.builder().itemId(null).metricType("INVALID_VIEW").timestamp(baseTime).build();
+        demandMetricsInputTopic.pipeInput("somekey", invalidEvent, baseTime.toEpochMilli());
+
+        TestRecord<String, MetricEvent> dltRecord = demandMetricsDltOutputTopic.readRecord();
+        assertThat(dltRecord).isNotNull();
+        assertThat(dltRecord.key()).isEqualTo("somekey");
+        assertThat(dltRecord.value().getMetricType()).isEqualTo("INVALID_VIEW");
+
+        // Verify that dltKafkaTemplate.send was called (if not using .to() directly)
+        // In the current stream, .to() is used, so this verification is against the output topic.
+        // If a KafkaTemplate was injected and used, then:
+        // verify(dltKafkaTemplate).send(eq(DEMAND_METRICS_DLT_TOPIC), eq("somekey"), anyString());
+
+        // Ensure no more records in DLT
+        assertThat(demandMetricsDltOutputTopic.isEmpty()).isTrue();
     }
 }
