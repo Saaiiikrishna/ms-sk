@@ -13,7 +13,7 @@ import com.mysillydreams.catalogservice.dto.StockLevelDto;
 import com.mysillydreams.catalogservice.exception.InvalidRequestException;
 import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import com.mysillydreams.catalogservice.kafka.event.StockLevelChangedEvent;
-import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
+// import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService; // No longer direct use
 import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +37,8 @@ public class StockService {
     private final StockLevelRepository stockLevelRepository;
     private final CatalogItemRepository catalogItemRepository;
     private final StockTransactionRepository stockTransactionRepository;
-    private final KafkaProducerService kafkaProducerService;
+    // private final KafkaProducerService kafkaProducerService; // Replaced
+    private final OutboxEventService outboxEventService; // Added
 
     @Value("${app.kafka.topic.stock-changed}")
     private String stockChangedTopic;
@@ -74,9 +75,10 @@ public class StockService {
 
         // Create stock transaction record for reservation
         // Using a specific type or a generic 'ISSUE' with a reason like 'CartReservation'
-        createAndSaveTransaction(item, StockAdjustmentType.ISSUE, -quantityToReserve, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartReservation", null);
+        int actualDelta = -quantityToReserve;
+        createAndSaveTransaction(item, StockAdjustmentType.ISSUE, actualDelta, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartReservation", null);
 
-        publishStockLevelChangedEvent(item, StockAdjustmentType.ISSUE, -quantityToReserve, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartReservation", null);
+        publishStockLevelChangedEventViaOutbox("StockLevel", item.getId(), item, StockAdjustmentType.ISSUE, actualDelta, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartReservation", null);
 
         log.info("Successfully reserved {} units for item ID: {}. New stock: {}", quantityToReserve, itemId, updatedStockLevel.getQuantityOnHand());
         return convertToDto(updatedStockLevel, item);
@@ -102,9 +104,10 @@ public class StockService {
         int quantityBefore = stockLevel.getQuantityOnHand();
         stockLevel.setQuantityOnHand(quantityBefore + quantityToRelease);
         StockLevelEntity updatedStockLevel = stockLevelRepository.save(stockLevel);
+        int actualDeltaRelease = quantityToRelease;
 
-        createAndSaveTransaction(item, StockAdjustmentType.RECEIVE, quantityToRelease, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartRelease/Cancellation", null);
-        publishStockLevelChangedEvent(item, StockAdjustmentType.RECEIVE, quantityToRelease, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartRelease/Cancellation", null);
+        createAndSaveTransaction(item, StockAdjustmentType.RECEIVE, actualDeltaRelease, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartRelease/Cancellation", null);
+        publishStockLevelChangedEventViaOutbox("StockLevel", item.getId(), item, StockAdjustmentType.RECEIVE, actualDeltaRelease, quantityBefore, updatedStockLevel.getQuantityOnHand(), "CartRelease/Cancellation", null);
 
         log.info("Successfully released {} units for item ID: {}. New stock: {}", quantityToRelease, itemId, updatedStockLevel.getQuantityOnHand());
         return convertToDto(updatedStockLevel, item);
@@ -176,8 +179,37 @@ public class StockService {
                 // For now, let's assume adjustment type means positive adjustment.
                 // To support negative adjustments, we'd modify StockAdjustmentRequest or add a new type.
                 // Let's assume, for now, ADJUSTMENT means an increase.
-                log.warn("StockAdjustmentType.ADJUSTMENT currently implies positive adjustment. For decreases, use ISSUE or refine ADJUSTMENT handling.");
-                quantityAfter = quantityBefore + quantityChanged;
+        // Based on current StockAdjustmentRequest, quantity is positive.
+        // If ADJUSTMENT type is meant for *any* correction, it should allow negative quantity in request,
+        // or the service interprets quantity based on a sub-type or reason.
+        // For now, assuming quantityChanged (from request.getQuantity()) is the magnitude, and type dictates direction.
+        // For event/transaction log, quantityChanged needs to be signed.
+
+        // Re-evaluating quantityChanged for event/log based on type:
+        int signedQuantityChanged = request.getQuantity(); // Default to positive magnitude from request
+
+        switch (request.getAdjustmentType()) {
+            case RECEIVE:
+                quantityAfter = quantityBefore + request.getQuantity();
+                // signedQuantityChanged is already positive
+                break;
+            case ISSUE:
+                if (quantityBefore < request.getQuantity()) {
+                    throw new InvalidRequestException(String.format(
+                            "Insufficient stock for item ID %s to issue. Requested: %d, Available: %d",
+                            request.getItemId(), request.getQuantity(), quantityBefore
+                    ));
+                }
+                quantityAfter = quantityBefore - request.getQuantity();
+                signedQuantityChanged = -request.getQuantity(); // Make delta negative for event/transaction log
+                break;
+            case ADJUSTMENT:
+                // Assuming ADJUSTMENT means an increase by request.quantity for now, similar to RECEIVE
+                // If it could be negative, StockAdjustmentRequest's quantity field validation (@Min(1)) needs change
+                // or this logic needs to be more flexible (e.g. separate signed field for adjustment amount).
+                log.warn("StockAdjustmentType.ADJUSTMENT currently implies positive adjustment by request.quantity. For decreases, use ISSUE or refine ADJUSTMENT handling for negative values.");
+                quantityAfter = quantityBefore + request.getQuantity();
+                // signedQuantityChanged is already positive for this interpretation
                 break;
             default:
                 throw new InvalidRequestException("Unsupported stock adjustment type: " + request.getAdjustmentType());
@@ -190,11 +222,11 @@ public class StockService {
         stockLevel.setQuantityOnHand(quantityAfter);
         StockLevelEntity updatedStockLevel = stockLevelRepository.save(stockLevel); // Optimistic lock check
 
-        createAndSaveTransaction(item, request.getAdjustmentType(), quantityChanged, quantityBefore, quantityAfter, request.getReason(), request.getReferenceId());
-        publishStockLevelChangedEvent(item, request.getAdjustmentType(), quantityChanged, quantityBefore, quantityAfter, request.getReason(), request.getReferenceId());
+        createAndSaveTransaction(item, request.getAdjustmentType(), signedQuantityChanged, quantityBefore, quantityAfter, request.getReason(), request.getReferenceId());
+        publishStockLevelChangedEventViaOutbox("StockLevel", item.getId(), item, request.getAdjustmentType(), signedQuantityChanged, quantityBefore, quantityAfter, request.getReason(), request.getReferenceId());
 
         log.info("Stock adjusted for item ID: {}. Before: {}, After: {}, Change: {}, Reason: {}",
-                request.getItemId(), quantityBefore, quantityAfter, quantityChanged, request.getReason());
+                request.getItemId(), quantityBefore, quantityAfter, signedQuantityChanged, request.getReason());
         return convertToDto(updatedStockLevel, item);
     }
 
@@ -273,21 +305,21 @@ public class StockService {
         stockTransactionRepository.save(transaction);
     }
 
-    private void publishStockLevelChangedEvent(CatalogItemEntity item, StockAdjustmentType type, int quantityDelta,
+    private void publishStockLevelChangedEventViaOutbox(String aggregateType, UUID aggregateId, CatalogItemEntity item, StockAdjustmentType type, int quantityDelta,
                                                int qtyBefore, int qtyAfter, String reason, String referenceId) {
         StockLevelChangedEvent event = StockLevelChangedEvent.builder()
-                .eventId(UUID.randomUUID())
+                .eventId(UUID.randomUUID()) // This could be generated by poller or be same as OutboxEventEntity.id
                 .itemId(item.getId())
                 .itemSku(item.getSku())
                 .adjustmentType(type)
-                .quantityChanged(quantityDelta) // Signed delta
+                .quantityChanged(quantityDelta)
                 .quantityBefore(qtyBefore)
                 .quantityAfter(qtyAfter)
                 .reason(reason)
                 .referenceId(referenceId)
                 .timestamp(Instant.now())
                 .build();
-        kafkaProducerService.sendMessage(stockChangedTopic, item.getId().toString(), event);
+        outboxEventService.saveOutboxEvent(aggregateType, aggregateId, "stock.level.changed", stockChangedTopic, event);
     }
 
     private StockLevelDto convertToDto(StockLevelEntity entity, CatalogItemEntity item) {

@@ -10,7 +10,7 @@ import com.mysillydreams.catalogservice.exception.DuplicateResourceException;
 import com.mysillydreams.catalogservice.exception.InvalidRequestException;
 import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import com.mysillydreams.catalogservice.kafka.event.CategoryEvent;
-import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
+// import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService; // No longer direct use
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,7 +30,8 @@ public class CategoryService {
 
     private final CategoryRepository categoryRepository;
     private final CatalogItemRepository catalogItemRepository; // To check if category is empty before deletion
-    private final KafkaProducerService kafkaProducerService;
+    // private final KafkaProducerService kafkaProducerService; // Replaced by outboxEventService
+    private final OutboxEventService outboxEventService; // Added
 
     @Value("${app.kafka.topic.category-created}")
     private String categoryCreatedTopic;
@@ -79,8 +80,8 @@ public class CategoryService {
         savedCategory = categoryRepository.save(savedCategory); // Save again to persist path
 
 
-        CategoryDto categoryDto = convertToDto(savedCategory, false); // Don't load children for create response
-        publishCategoryEvent(categoryCreatedTopic, "category.created", savedCategory);
+        CategoryDto categoryDto = convertToDto(savedCategory, false);
+        publishCategoryEventViaOutbox("Category", savedCategory.getId(), categoryCreatedTopic, "category.created", savedCategory);
         log.info("Category created successfully with ID: {}", savedCategory.getId());
         return categoryDto;
     }
@@ -175,7 +176,7 @@ public class CategoryService {
 
         CategoryEntity updatedCategory = categoryRepository.save(category);
         CategoryDto categoryDto = convertToDto(updatedCategory, false);
-        publishCategoryEvent(categoryUpdatedTopic, "category.updated", updatedCategory /*, oldDetails if any */);
+        publishCategoryEventViaOutbox("Category", updatedCategory.getId(), categoryUpdatedTopic, "category.updated", updatedCategory /*, oldDetails if any */);
         log.info("Category updated successfully with ID: {}", updatedCategory.getId());
         return categoryDto;
     }
@@ -204,7 +205,7 @@ public class CategoryService {
         }
 
         categoryRepository.delete(category);
-        publishCategoryEvent(categoryDeletedTopic, "category.deleted", category);
+        publishCategoryEventViaOutbox("Category", category.getId(), categoryDeletedTopic, "category.deleted", category);
         log.info("Category deleted successfully with ID: {}", categoryId);
     }
 
@@ -226,18 +227,18 @@ public class CategoryService {
         return parentPath + category.getId().toString() + PATH_SEPARATOR;
     }
 
-
-    private void publishCategoryEvent(String topic, String eventType, CategoryEntity category) {
+    private void publishCategoryEventViaOutbox(String aggregateType, UUID aggregateId, String topic, String eventType, CategoryEntity category) {
         CategoryEvent event = CategoryEvent.builder()
-                .eventType(eventType)
+                .eventType(eventType) // This field in DTO is somewhat redundant if eventType param is used for OutboxEventEntity.eventType
                 .categoryId(category.getId())
                 .name(category.getName())
                 .parentId(category.getParentCategory() != null ? category.getParentCategory().getId() : null)
                 .type(category.getType())
                 .path(category.getPath())
-                .timestamp(Instant.now())
+                .timestamp(Instant.now()) // Event creation time, not necessarily DB timestamp
                 .build();
-        kafkaProducerService.sendMessage(topic, category.getId().toString(), event);
+        // The OutboxEventEntity.eventType will be the canonical event type string.
+        outboxEventService.saveOutboxEvent(aggregateType, aggregateId, eventType, topic, event);
     }
 
     private CategoryDto convertToDto(CategoryEntity entity, boolean includeChildren) {

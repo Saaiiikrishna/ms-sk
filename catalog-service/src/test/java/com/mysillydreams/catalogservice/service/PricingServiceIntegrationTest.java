@@ -7,10 +7,9 @@ import com.mysillydreams.catalogservice.domain.model.ItemType;
 import com.mysillydreams.catalogservice.domain.repository.BulkPricingRuleRepository;
 import com.mysillydreams.catalogservice.domain.repository.CatalogItemRepository;
 import com.mysillydreams.catalogservice.domain.repository.CategoryRepository;
-import com.mysillydreams.catalogservice.dto.BulkPricingRuleDto;
-import com.mysillydreams.catalogservice.dto.CreateBulkPricingRuleRequest;
-import com.mysillydreams.catalogservice.dto.PriceDetailDto;
+import com.mysillydreams.catalogservice.dto.*; // Import all DTOs
 import com.mysillydreams.catalogservice.kafka.event.BulkPricingRuleEvent;
+import com.mysillydreams.catalogservice.service.pricing.DynamicPricingEngine; // For potential spy/mock if complex interactions were tested
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -145,9 +144,10 @@ public class PricingServiceIntegrationTest {
         PriceDetailDto priceDetail = pricingService.getPriceDetail(product1.getId(), 5);
 
         assertThat(priceDetail.getBasePrice()).isEqualByComparingTo("100.00");
-        assertThat(priceDetail.getApplicableDiscountPercentage()).isEqualByComparingTo("0.00");
-        assertThat(priceDetail.getDiscountedUnitPrice()).isEqualByComparingTo("100.00");
-        assertThat(priceDetail.getTotalPrice()).isEqualByComparingTo("500.00"); // 5 * 100
+        assertThat(priceDetail.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(priceDetail.getTotalPrice()).isEqualByComparingTo("500.00")); // 5 * 100
+        assertThat(priceDetail.getComponents()).hasSize(1);
+        assertThat(priceDetail.getComponents().get(0).getCode()).isEqualTo("CATALOG_BASE_PRICE");
     }
 
     @Test
@@ -160,9 +160,9 @@ public class PricingServiceIntegrationTest {
         PriceDetailDto priceDetail = pricingService.getPriceDetail(product1.getId(), 10); // Request 10 items
 
         assertThat(priceDetail.getBasePrice()).isEqualByComparingTo("100.00");
-        assertThat(priceDetail.getApplicableDiscountPercentage()).isEqualByComparingTo("10.00");
-        assertThat(priceDetail.getDiscountedUnitPrice()).isEqualByComparingTo("90.00"); // 100 * 0.9
-        assertThat(priceDetail.getTotalPrice()).isEqualByComparingTo("900.00"); // 10 * 90
+        assertThat(priceDetail.getFinalUnitPrice()).isEqualByComparingTo("90.00"); // 100 * 0.9
+        assertThat(priceDetail.getTotalPrice()).isEqualByComparingTo("900.00")); // 10 * 90
+        assertThat(priceDetail.getComponents()).anyMatch(c -> "BULK_DISCOUNT".equals(c.getCode()) && c.getAmount().compareTo(new BigDecimal("-10.00")) == 0);
     }
 
     @Test
@@ -174,8 +174,8 @@ public class PricingServiceIntegrationTest {
 
         PriceDetailDto priceDetail = pricingService.getPriceDetail(product1.getId(), 4); // Request 4 items (less than minQty)
 
-        assertThat(priceDetail.getApplicableDiscountPercentage()).isEqualByComparingTo("0.00");
-        assertThat(priceDetail.getDiscountedUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(priceDetail.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(priceDetail.getComponents()).noneMatch(c -> "BULK_DISCOUNT".equals(c.getCode()));
     }
 
     @Test
@@ -185,7 +185,8 @@ public class PricingServiceIntegrationTest {
         consumerRecords.clear();
 
         PriceDetailDto priceDetail = pricingService.getPriceDetail(product1.getId(), 10);
-        assertThat(priceDetail.getApplicableDiscountPercentage()).isEqualByComparingTo("0.00");
+        assertThat(priceDetail.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(priceDetail.getComponents()).noneMatch(c -> "BULK_DISCOUNT".equals(c.getCode()));
     }
 
     @Test
@@ -198,7 +199,8 @@ public class PricingServiceIntegrationTest {
         consumerRecords.clear();
 
         PriceDetailDto priceDetail = pricingService.getPriceDetail(product1.getId(), 10);
-        assertThat(priceDetail.getApplicableDiscountPercentage()).isEqualByComparingTo("0.00");
+        assertThat(priceDetail.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(priceDetail.getComponents()).noneMatch(c -> "BULK_DISCOUNT".equals(c.getCode()));
     }
 
     @Test
@@ -206,29 +208,28 @@ public class PricingServiceIntegrationTest {
         // Rule 1: 5% for >= 5 items
         pricingService.createBulkPricingRule(CreateBulkPricingRuleRequest.builder()
             .itemId(product1.getId()).minQuantity(5).discountPercentage(new BigDecimal("5.00")).active(true).build());
-        // Rule 2: 10% for >= 10 items (better discount, more specific quantity)
+        // Rule 2: 10% for >= 10 items (better discount, more specific quantity for higher qty)
         pricingService.createBulkPricingRule(CreateBulkPricingRuleRequest.builder()
             .itemId(product1.getId()).minQuantity(10).discountPercentage(new BigDecimal("10.00")).active(true).build());
-        // Rule 3: 7% for >= 2 items (less discount, but applies to broader range)
+        // Rule 3: 7% for >= 2 items (applies to broader range, but less discount than rule 2 for qty >=10)
          pricingService.createBulkPricingRule(CreateBulkPricingRuleRequest.builder()
             .itemId(product1.getId()).minQuantity(2).discountPercentage(new BigDecimal("7.00")).active(true).build());
         consumerRecords.clear();
 
-        // Scenario 1: Quantity 12 (Rule 2 should apply - 10%)
+        // Scenario 1: Quantity 12 (Rule 2: 10% should apply)
         PriceDetailDto priceDetail_qty12 = pricingService.getPriceDetail(product1.getId(), 12);
-        assertThat(priceDetail_qty12.getApplicableDiscountPercentage()).isEqualByComparingTo("10.00");
-        assertThat(priceDetail_qty12.getDiscountedUnitPrice()).isEqualByComparingTo("90.00");
+        assertThat(priceDetail_qty12.getFinalUnitPrice()).isEqualByComparingTo("90.00"); // 100 * 0.90
+        assertThat(priceDetail_qty12.getComponents()).anyMatch(c -> "BULK_DISCOUNT".equals(c.getCode()) && c.getAmount().compareTo(new BigDecimal("-10.00")) == 0);
 
-        // Scenario 2: Quantity 7 (Rule 1 (5%) and Rule 3 (7%) apply. Rule 3 (7%) should be picked as it has higher discount)
-        // The query findActiveApplicableRules is sorted by minQuantity DESC.
-        // The service logic then iterates and picks max discount.
+
+        // Scenario 2: Quantity 7 (Rule 1 (5% for >=5) and Rule 3 (7% for >=2) apply. Rule 3 (7%) should be picked as it has higher discount)
         PriceDetailDto priceDetail_qty7 = pricingService.getPriceDetail(product1.getId(), 7);
-        assertThat(priceDetail_qty7.getApplicableDiscountPercentage()).isEqualByComparingTo("7.00"); // Rule 3 (7% for >=2) is better than Rule 1 (5% for >=5) for qty 7
-        assertThat(priceDetail_qty7.getDiscountedUnitPrice()).isEqualByComparingTo("93.00"); // 100 * 0.93
+        assertThat(priceDetail_qty7.getFinalUnitPrice()).isEqualByComparingTo("93.00"); // 100 * 0.93
+        assertThat(priceDetail_qty7.getComponents()).anyMatch(c -> "BULK_DISCOUNT".equals(c.getCode()) && c.getAmount().compareTo(new BigDecimal("-7.00")) == 0);
 
         // Scenario 3: Quantity 3 (Only Rule 3 applies - 7%)
         PriceDetailDto priceDetail_qty3 = pricingService.getPriceDetail(product1.getId(), 3);
-        assertThat(priceDetail_qty3.getApplicableDiscountPercentage()).isEqualByComparingTo("7.00");
-        assertThat(priceDetail_qty3.getDiscountedUnitPrice()).isEqualByComparingTo("93.00");
+        assertThat(priceDetail_qty3.getFinalUnitPrice()).isEqualByComparingTo("93.00"); // 100 * 0.93
+        assertThat(priceDetail_qty3.getComponents()).anyMatch(c -> "BULK_DISCOUNT".equals(c.getCode()) && c.getAmount().compareTo(new BigDecimal("-7.00")) == 0);
     }
 }

@@ -10,15 +10,19 @@ import com.mysillydreams.catalogservice.domain.repository.CatalogItemRepository;
 import com.mysillydreams.catalogservice.dto.*;
 import com.mysillydreams.catalogservice.exception.InvalidRequestException;
 import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
-import com.mysillydreams.catalogservice.config.RedisConfig;
+import com.mysillydreams.catalogservice.config.CacheKeyConstants; // Changed from RedisConfig
 import com.mysillydreams.catalogservice.kafka.event.CartCheckedOutEvent;
-import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
+// import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService; // No longer direct use
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.persistence.OptimisticLockException; // For Retryable
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException; // For Retryable
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.retry.annotation.Backoff; // For Retryable
+import org.springframework.retry.annotation.Retryable; // For Retryable
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,11 +42,12 @@ public class CartService {
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
     private final CatalogItemRepository catalogItemRepository;
-    private final StockService stockService; // For reserving/releasing stock
-    private final PricingService pricingService; // For getting price details
-    private final KafkaProducerService kafkaProducerService;
+    private final StockService stockService;
+    private final PricingService pricingService;
+    // private final KafkaProducerService kafkaProducerService; // Replaced
+    private final OutboxEventService outboxEventService; // Added
     private final RedisTemplate<String, CartDto> cartDtoRedisTemplate;
-    private final MeterRegistry meterRegistry; // Added MeterRegistry
+    private final MeterRegistry meterRegistry;
 
     // Cache metrics
     private final Counter cartCacheHitCounter;
@@ -54,18 +59,20 @@ public class CartService {
 
     public CartService(CartRepository cartRepository, CartItemRepository cartItemRepository,
                        CatalogItemRepository catalogItemRepository, StockService stockService,
-                       PricingService pricingService, KafkaProducerService kafkaProducerService,
+                       PricingService pricingService,
+                       // KafkaProducerService kafkaProducerService, // Removed
+                       OutboxEventService outboxEventService, // Added
                        RedisTemplate<String, CartDto> cartDtoRedisTemplate, MeterRegistry meterRegistry) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.catalogItemRepository = catalogItemRepository;
         this.stockService = stockService;
         this.pricingService = pricingService;
-        this.kafkaProducerService = kafkaProducerService;
+        // this.kafkaProducerService = kafkaProducerService; // Removed
+        this.outboxEventService = outboxEventService; // Added
         this.cartDtoRedisTemplate = cartDtoRedisTemplate;
         this.meterRegistry = meterRegistry;
 
-        // Initialize counters
         this.cartCacheHitCounter = Counter.builder("catalog.cart.cache.requests")
                                           .tag("result", "hit")
                                           .description("Number of cart cache hits")
@@ -77,7 +84,7 @@ public class CartService {
     }
 
     private String getCartCacheKey(String userId) {
-        return RedisConfig.CART_KEY_PREFIX + userId;
+        return CacheKeyConstants.getActiveCartDtoKey(userId); // Use constant
     }
 
     @Transactional
@@ -110,6 +117,11 @@ public class CartService {
     }
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3, // Adjust attempts and backoff as needed
+        backoff = @Backoff(delay = 150, multiplier = 2) // Slightly different backoff for cart ops
+    )
     public CartDto addItemToCart(String userId, AddItemToCartRequest request) {
         log.info("Adding item {} (qty: {}) to cart for user ID: {}", request.getCatalogItemId(), request.getQuantity(), userId);
         // Ensure cart exists and is loaded (this will also consult cache via getOrCreateCart logic if we call it)
@@ -180,8 +192,8 @@ public class CartService {
             cartItem = CartItemEntity.builder()
                     .catalogItem(item)
                     .quantity(request.getQuantity())
-                    .unitPrice(priceDetail.getDiscountedUnitPrice()) // Store the actual unit price after potential current discounts
-                    // .discountApplied() // This might be complex to store per line if dynamic. Or store ruleId.
+                    .unitPrice(priceDetail.getFinalUnitPrice()) // Store the final unit price from new DTO
+                    // .discountApplied() // This field in CartItemEntity is not used by new PriceDetailDto logic for calculation
                     .build();
             cart.addItem(cartItem); // This also sets cartItem.setCart(cart)
         }
@@ -199,12 +211,18 @@ public class CartService {
     }
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 150, multiplier = 2)
+    )
     public CartDto updateCartItemQuantity(String userId, UUID catalogItemId, int newQuantity) {
         log.info("Updating quantity for item {} to {} for user ID: {}", catalogItemId, newQuantity, userId);
         if (newQuantity <= 0) {
             throw new InvalidRequestException("New quantity must be positive. To remove, use delete endpoint.");
         }
-        CartEntity cart = getActiveCartEntityForUser(userId); // Fetches from DB
+        // Re-fetch cart inside retryable method to get latest version
+        CartEntity cart = getActiveCartEntityForUser(userId);
         CartItemEntity cartItem = cart.getItems().stream()
                 .filter(ci -> ci.getCatalogItem().getId().equals(catalogItemId))
                 .findFirst()
@@ -223,9 +241,9 @@ public class CartService {
         }
 
         cartItem.setQuantity(newQuantity);
-        // Update unit price if pricing rules change based on new quantity
+        // Update unit price based on new quantity and current rules
         PriceDetailDto priceDetail = pricingService.getPriceDetail(item.getId(), newQuantity);
-        cartItem.setUnitPrice(priceDetail.getDiscountedUnitPrice());
+        cartItem.setUnitPrice(priceDetail.getFinalUnitPrice()); // Store the new final unit price
 
         cart.setUpdatedAt(Instant.now());
 
@@ -239,9 +257,15 @@ public class CartService {
     }
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 150, multiplier = 2)
+    )
     public CartDto removeCartItem(String userId, UUID catalogItemId) {
         log.info("Removing item {} from cart for user ID: {}", catalogItemId, userId);
-        CartEntity cart = getActiveCartEntityForUser(userId); // Fetches from DB
+        // Re-fetch cart inside retryable method
+        CartEntity cart = getActiveCartEntityForUser(userId);
         CartItemEntity cartItem = cart.getItems().stream()
                 .filter(ci -> ci.getCatalogItem().getId().equals(catalogItemId))
                 .findFirst()
@@ -284,9 +308,15 @@ public class CartService {
     }
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 150, multiplier = 2)
+    )
     public CartDto checkoutCart(String userId) {
         log.info("Checking out cart for user ID: {}", userId);
-        CartEntity cart = getActiveCartEntityForUser(userId); // Fetches from DB
+        // Re-fetch cart inside retryable method
+        CartEntity cart = getActiveCartEntityForUser(userId);
 
         if (cart.getItems().isEmpty()) {
             throw new InvalidRequestException("Cannot checkout an empty cart.");
@@ -298,7 +328,7 @@ public class CartService {
         cart.setUpdatedAt(Instant.now());
         CartEntity checkedOutCart = cartRepository.save(cart);
 
-        publishCartCheckedOutEvent(checkedOutCart, cartDtoForEvent);
+        publishCartCheckedOutEventViaOutbox("Cart", checkedOutCart.getId(), checkedOutCart, cartDtoForEvent);
         log.info("Cart ID: {} checked out successfully for user ID: {}", cart.getId(), userId);
 
         // Evict from cache as it's no longer an "active" cart in the same sense
@@ -358,33 +388,46 @@ public class CartService {
     private CartItemDetailDto convertCartItemToDetailDto(CartItemEntity cartItem) {
         CatalogItemEntity catalogItem = cartItem.getCatalogItem();
 
-        // Use the unitPrice stored in CartItemEntity if we trust it to be the "locked-in" price at time of add/update.
-        // However, the current DTO conversion logic in CartService always recalculates price details for display.
-        // This ensures the displayed cart is always fresh but means CartItemEntity.unitPrice is less critical for display.
-        // Let's stick to recalculating for display via pricingService.getPriceDetail.
-        PriceDetailDto currentPriceDetail = pricingService.getPriceDetail(catalogItem.getId(), cartItem.getQuantity());
+        // Get the comprehensive price detail using the new PricingService method
+        PriceDetailDto priceDetail = pricingService.getPriceDetail(catalogItem.getId(), cartItem.getQuantity());
 
-        BigDecimal originalUnitPrice = catalogItem.getBasePrice();
-        BigDecimal finalUnitPrice = currentPriceDetail.getDiscountedUnitPrice(); // This is the one we should use for line total
-        BigDecimal discountAppliedPerUnit = originalUnitPrice.subtract(finalUnitPrice);
-        BigDecimal lineItemTotal = finalUnitPrice.multiply(new BigDecimal(cartItem.getQuantity()));
+        // The cartItem.getUnitPrice() stores the finalUnitPrice at the time of adding/updating.
+        // For display in CartItemDetailDto, we use values from the freshly calculated PriceDetailDto.
+        // This ensures the display is always based on the latest pricing logic.
+
+        // Calculate total discount amount for this line item based on components
+        BigDecimal totalLineItemDiscountAmount = priceDetail.getComponents().stream()
+            .filter(component -> component.getAmount().compareTo(BigDecimal.ZERO) < 0) // Negative amounts are discounts
+            .map(PricingComponent::getAmount)
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .negate(); // Sum of negative discounts, then negate to get positive total discount amount
+
+        // Discount per unit is more complex if multiple discount components exist.
+        // For simplicity, let's represent discountAppliedPerUnit as (basePrice - finalUnitPriceFromDetail)
+        // or (overridePrice if set - finalUnitPriceFromDetail)
+        BigDecimal referencePriceForDiscountCalc = priceDetail.getOverridePrice() != null ? priceDetail.getOverridePrice() : priceDetail.getBasePrice();
+        BigDecimal discountAppliedPerUnit = referencePriceForDiscountCalc.subtract(priceDetail.getFinalUnitPrice());
+
 
         return CartItemDetailDto.builder()
                 .cartItemId(cartItem.getId())
                 .catalogItemId(catalogItem.getId())
                 .sku(catalogItem.getSku())
                 .name(catalogItem.getName())
+                // .imageUrl() // TODO: Add if CatalogItemEntity has imageUrl
                 .quantity(cartItem.getQuantity())
-                .originalUnitPrice(originalUnitPrice.setScale(2, RoundingMode.HALF_UP))
+                .originalUnitPrice(priceDetail.getBasePrice().setScale(2, RoundingMode.HALF_UP)) // This is CatalogItem.basePrice
                 .discountAppliedPerUnit(discountAppliedPerUnit.setScale(2, RoundingMode.HALF_UP))
-                .finalUnitPrice(finalUnitPrice.setScale(2, RoundingMode.HALF_UP))
-                .lineItemTotal(lineItemTotal.setScale(2, RoundingMode.HALF_UP))
+                .finalUnitPrice(priceDetail.getFinalUnitPrice().setScale(2, RoundingMode.HALF_UP)) // This is after all components
+                .lineItemTotal(priceDetail.getTotalPrice().setScale(2, RoundingMode.HALF_UP)) // This is quantity * finalUnitPrice
+                // Optionally, could include the list of PricingComponents here too if UI needs to show breakdown per item
+                // .pricingComponents(priceDetail.getComponents())
                 .build();
     }
 
-    private void publishCartCheckedOutEvent(CartEntity cart, CartDto cartDto) {
+    private void publishCartCheckedOutEventViaOutbox(String aggregateType, UUID aggregateId, CartEntity cart, CartDto cartDto) {
         List<CartCheckedOutEvent.CartCheckedOutItem> eventItems = cartDto.getItems().stream()
-            .map(detailDto -> CartCheckedOutEvent.CartCheckedOutItem.builder() // map from CartItemDetailDto
+            .map(detailDto -> CartCheckedOutEvent.CartCheckedOutItem.builder()
                 .catalogItemId(detailDto.getCatalogItemId())
                 .sku(detailDto.getSku())
                 .name(detailDto.getName())
@@ -403,10 +446,10 @@ public class CartService {
                 .items(eventItems)
                 .subtotal(cartDto.getSubtotal())
                 .totalDiscountAmount(cartDto.getTotalDiscountAmount())
-                .finalTotal(cartDto.getFinalTotal()) // This is sum of final line item totals
+                .finalTotal(cartDto.getFinalTotal())
                 .checkoutTimestamp(Instant.now())
                 .build();
 
-        kafkaProducerService.sendMessage(cartCheckedOutTopic, cart.getId().toString(), event);
+        outboxEventService.saveOutboxEvent(aggregateType, aggregateId, "cart.checked_out", cartCheckedOutTopic, event);
     }
 }

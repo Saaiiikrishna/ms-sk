@@ -174,10 +174,22 @@ public class CartServiceIntegrationTest {
 
         CartDto finalCartDto = cartService.getCartTotals(testUserId); // Recalculates and gives DTO
         assertThat(finalCartDto.getItems()).hasSize(2);
-        //Line item 1: 2 * 10.00 = 20.00
-        //Line item 2: 3 * 20.00 = 60.00
-        //Subtotal = 80.00
+        // Line item 1 (product1, base 10.00): 2 * 10.00 = 20.00
+        // Line item 2 (product2, base 20.00): 3 * 20.00 = 60.00
+        // Subtotal (sum of final line totals) = 20.00 + 60.00 = 80.00
+        // TotalDiscount = 0 (no rules applied)
+        // FinalTotal = 80.00
         assertThat(finalCartDto.getSubtotal()).isEqualByComparingTo("80.00");
+        assertThat(finalCartDto.getTotalDiscountAmount()).isEqualByComparingTo("0.00");
+        assertThat(finalCartDto.getFinalTotal()).isEqualByComparingTo("80.00");
+
+        CartItemDetailDto p1Detail = finalCartDto.getItems().stream().filter(i -> i.getCatalogItemId().equals(product1.getId())).findFirst().orElseThrow();
+        assertThat(p1Detail.getFinalUnitPrice()).isEqualByComparingTo("10.00");
+        assertThat(p1Detail.getLineItemTotal()).isEqualByComparingTo("20.00");
+
+        CartItemDetailDto p2Detail = finalCartDto.getItems().stream().filter(i -> i.getCatalogItemId().equals(product2.getId())).findFirst().orElseThrow();
+        assertThat(p2Detail.getFinalUnitPrice()).isEqualByComparingTo("20.00");
+        assertThat(p2Detail.getLineItemTotal()).isEqualByComparingTo("60.00");
     }
 
     @Test
@@ -243,10 +255,12 @@ public class CartServiceIntegrationTest {
         assertThat(event.getCartId()).isEqualTo(cart.getId());
         assertThat(event.getUserId()).isEqualTo(testUserId);
         assertThat(event.getItems()).hasSize(2);
-        // Item 1: 2 * 10.00 = 20.00
-        // Item 2: 1 * 20.00 = 20.00
-        // Total = 40.00
+        // Item 1 (product1, base 10.00): 2 * 10.00 = 20.00
+        // Item 2 (product2, base 20.00): 1 * 20.00 = 20.00
+        // FinalTotal (sum of final line totals) = 20.00 + 20.00 = 40.00
         assertThat(event.getFinalTotal()).isEqualByComparingTo("40.00");
+        assertThat(event.getSubtotal()).isEqualByComparingTo("40.00");
+        assertThat(event.getTotalDiscountAmount()).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -262,20 +276,30 @@ public class CartServiceIntegrationTest {
 
         CartDto cartDto = cartService.getCartTotals(testUserId);
 
-        // Product 1: 10 items. Base price 10.00. Discount 10%.
-        // Discounted unit price = 10.00 * 0.9 = 9.00
-        // Line item total = 10 * 9.00 = 90.00
-        // Original total = 10 * 10.00 = 100.00
-        // Discount amount = 100.00 - 90.00 = 10.00
+        // Product 1: 10 items. Base price 10.00. Rule: 10% off for >= 5 items.
+        // PricingService.getPriceDetail will return:
+        //   basePrice: 10.00
+        //   finalUnitPrice: 9.00
+        //   totalPrice (for 10 items): 90.00
+        //   components: [CATALOG_BASE_PRICE (10.00), BULK_DISCOUNT (-1.00 per unit effectively, or -10.00 total for line)]
+        // CartItemDetailDto should reflect this:
+        //   originalUnitPrice: 10.00
+        //   finalUnitPrice: 9.00
+        //   discountAppliedPerUnit: 1.00
+        //   lineItemTotal: 90.00
+        // CartDto totals:
+        //   subtotal: 90.00 (sum of lineItemTotals)
+        //   totalDiscountAmount: 10.00 ( (10.00 - 9.00) * 10 )
+        //   finalTotal: 90.00
 
         assertThat(cartDto.getItems()).hasSize(1);
         CartItemDetailDto itemDetail = cartDto.getItems().get(0);
         assertThat(itemDetail.getCatalogItemId()).isEqualTo(product1.getId());
         assertThat(itemDetail.getQuantity()).isEqualTo(10);
-        assertThat(itemDetail.getOriginalUnitPrice()).isEqualByComparingTo("10.00");
-        assertThat(itemDetail.getFinalUnitPrice()).isEqualByComparingTo("9.00");
-        assertThat(itemDetail.getDiscountAppliedPerUnit()).isEqualByComparingTo("1.00");
-        assertThat(itemDetail.getLineItemTotal()).isEqualByComparingTo("90.00");
+        assertThat(itemDetail.getOriginalUnitPrice()).isEqualByComparingTo("10.00"); // From CatalogItem.basePrice via PriceDetailDto.basePrice
+        assertThat(itemDetail.getFinalUnitPrice()).isEqualByComparingTo("9.00");     // From PriceDetailDto.finalUnitPrice
+        assertThat(itemDetail.getDiscountAppliedPerUnit()).isEqualByComparingTo("1.00"); // Derived: original - final
+        assertThat(itemDetail.getLineItemTotal()).isEqualByComparingTo("90.00");    // From PriceDetailDto.totalPrice (for the line)
 
         assertThat(cartDto.getSubtotal()).isEqualByComparingTo("90.00");
         assertThat(cartDto.getTotalDiscountAmount()).isEqualByComparingTo("10.00");

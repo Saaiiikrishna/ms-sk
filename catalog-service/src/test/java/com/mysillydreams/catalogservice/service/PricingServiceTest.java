@@ -6,15 +6,16 @@ import com.mysillydreams.catalogservice.domain.model.ItemType;
 import com.mysillydreams.catalogservice.domain.repository.BulkPricingRuleRepository;
 import com.mysillydreams.catalogservice.domain.repository.CatalogItemRepository;
 import com.mysillydreams.catalogservice.dto.BulkPricingRuleDto;
-import com.mysillydreams.catalogservice.dto.CreateBulkPricingRuleRequest;
-import com.mysillydreams.catalogservice.dto.PriceDetailDto;
+import com.mysillydreams.catalogservice.dto.*; // Import all DTOs
 import com.mysillydreams.catalogservice.exception.InvalidRequestException;
 import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import com.mysillydreams.catalogservice.kafka.event.BulkPricingRuleEvent;
 import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
+import com.mysillydreams.catalogservice.service.pricing.DynamicPricingEngine; // Import new interface
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import java.util.ArrayList; // For new tests
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -40,6 +41,7 @@ public class PricingServiceTest {
     @Mock private BulkPricingRuleRepository bulkPricingRuleRepository;
     @Mock private CatalogItemRepository catalogItemRepository;
     @Mock private KafkaProducerService kafkaProducerService;
+    @Mock private DynamicPricingEngine dynamicPricingEngine; // Mock the new engine
 
     @InjectMocks private PricingService pricingService;
 
@@ -52,9 +54,13 @@ public class PricingServiceTest {
         itemId = UUID.randomUUID();
         item = CatalogItemEntity.builder()
                 .id(itemId).sku("ITEM01").name("Test Item")
-                .itemType(ItemType.PRODUCT).basePrice(new BigDecimal("100.00"))
+                .itemType(ItemType.PRODUCT).basePrice(new BigDecimal("100.00")) // Base price 100
                 .active(true)
                 .build();
+
+        // Default behavior for dynamic pricing engine (returns no components)
+        when(dynamicPricingEngine.evaluate(any(UUID.class), anyInt(), any(BigDecimal.class)))
+            .thenReturn(Collections.emptyList());
     }
 
     @Test
@@ -72,7 +78,7 @@ public class PricingServiceTest {
         BulkPricingRuleDto result = pricingService.createBulkPricingRule(request);
 
         assertThat(result).isNotNull();
-        assertThat(result.getDiscountPercentage()).isEqualTo(new BigDecimal("5.00"));
+        assertThat(result.getDiscountPercentage()).isEqualByComparingTo("5.00");
         verify(kafkaProducerService).sendMessage(eq("bulk.rules"), eq(savedRule.getId().toString()), any(BulkPricingRuleEvent.class));
     }
 
@@ -84,21 +90,28 @@ public class PricingServiceTest {
     }
 
     @Test
-    void getPriceDetail_noApplicableRules_returnsBasePrice() {
-        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+    void getPriceDetail_noRulesOrDynamicAdjustments_returnsBasePriceAsFinal() {
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item)); // Base price 100
         when(bulkPricingRuleRepository.findActiveApplicableRules(eq(itemId), eq(5), any(Instant.class)))
                 .thenReturn(Collections.emptyList());
+        // dynamicPricingEngine mock already set to return empty list in setUp
 
         PriceDetailDto result = pricingService.getPriceDetail(itemId, 5);
 
-        assertThat(result.getBasePrice()).isEqualTo(new BigDecimal("100.00"));
-        assertThat(result.getApplicableDiscountPercentage()).isEqualTo(BigDecimal.ZERO);
-        assertThat(result.getDiscountedUnitPrice()).isEqualTo(new BigDecimal("100.00"));
-        assertThat(result.getTotalPrice()).isEqualTo(new BigDecimal("500.00")); // 5 * 100.00
+        assertThat(result.getItemId()).isEqualTo(itemId);
+        assertThat(result.getQuantity()).isEqualTo(5);
+        assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getOverridePrice()).isNull();
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getTotalPrice()).isEqualByComparingTo("500.00")); // 5 * 100.00
+
+        assertThat(result.getComponents()).hasSize(1);
+        assertThat(result.getComponents().get(0).getCode()).isEqualTo("CATALOG_BASE_PRICE");
+        assertThat(result.getComponents().get(0).getAmount()).isEqualByComparingTo("100.00");
     }
 
     @Test
-    void getPriceDetail_withApplicableRule_returnsDiscountedPrice() {
+    void getPriceDetail_withBulkDiscount_appliesAndListsComponent() {
         BulkPricingRuleEntity rule = BulkPricingRuleEntity.builder()
                 .minQuantity(5).discountPercentage(new BigDecimal("10.00")) // 10%
                 .build();
@@ -109,37 +122,62 @@ public class PricingServiceTest {
 
         PriceDetailDto result = pricingService.getPriceDetail(itemId, 10);
 
-        assertThat(result.getBasePrice()).isEqualTo(new BigDecimal("100.00"));
-        assertThat(result.getApplicableDiscountPercentage()).isEqualTo(new BigDecimal("10.00"));
-        assertThat(result.getDiscountedUnitPrice()).isEqualTo(new BigDecimal("90.00")); // 100 * (1 - 0.10)
-        assertThat(result.getTotalPrice()).isEqualTo(new BigDecimal("900.00")); // 10 * 90.00
+        assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("90.00"); // 100 * (1 - 0.10)
+        assertThat(result.getTotalPrice()).isEqualByComparingTo("900.00")); // 10 * 90.00
+
+        assertThat(result.getComponents()).hasSize(2); // BASE_PRICE + BULK_DISCOUNT
+        PricingComponent bulkDiscountComp = result.getComponents().stream()
+            .filter(c -> "BULK_DISCOUNT".equals(c.getCode())).findFirst().orElseThrow();
+        assertThat(bulkDiscountComp.getAmount()).isEqualByComparingTo("-10.00"); // 10% of 100 is 10
     }
 
     @Test
-    void getPriceDetail_multipleApplicableRules_picksBestDiscount() {
-        BulkPricingRuleEntity rule1_lessDiscountMoreSpecificQty = BulkPricingRuleEntity.builder() // Should not be picked if a better discount exists for same applicability
-                .minQuantity(5).discountPercentage(new BigDecimal("5.00")).build(); // 5% for >=5
-        BulkPricingRuleEntity rule2_moreDiscountLessSpecificQty = BulkPricingRuleEntity.builder() //This one has higher discount %
-                .minQuantity(2).discountPercentage(new BigDecimal("10.00")).build(); // 10% for >=2
-
-        // The query findActiveApplicableRules already filters by quantity and sorts by minQuantity DESC.
-        // The service logic then picks the one with max discount percentage from the list.
-        // If query returns rules that are ALL applicable (minQty <= requestedQty), then max discount is chosen.
+    void getPriceDetail_withDynamicAdjustment_appliesAndListsComponent() {
+        BigDecimal dynamicSurchargeAmount = new BigDecimal("5.00");
+        PricingComponent dynamicSurcharge = PricingComponent.builder()
+            .code("DEMAND_SURGE")
+            .description("High demand surcharge")
+            .amount(dynamicSurchargeAmount) // +5.00
+            .build();
 
         when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item)); // basePrice 100.00
-        // Assume findActiveApplicableRules correctly returns rules that meet minQty criteria
-        // For quantity 5, both rules are applicable. The service should pick the one with 10% discount.
-        when(bulkPricingRuleRepository.findActiveApplicableRules(eq(itemId), eq(5), any(Instant.class)))
-                .thenReturn(List.of(rule1_lessDiscountMoreSpecificQty, rule2_moreDiscountLessSpecificQty));
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+        when(dynamicPricingEngine.evaluate(eq(itemId), eq(1), eq(new BigDecimal("100.00")))) // Evaluated on price after bulk (which is base here)
+            .thenReturn(List.of(dynamicSurcharge));
 
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
 
-        PriceDetailDto result = pricingService.getPriceDetail(itemId, 5);
-
-        assertThat(result.getApplicableDiscountPercentage()).isEqualTo(new BigDecimal("10.00"));
-        assertThat(result.getDiscountedUnitPrice()).isEqualTo(new BigDecimal("90.00"));
-        assertThat(result.getTotalPrice()).isEqualTo(new BigDecimal("450.00")); // 5 * 90.00
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("105.00"); // 100 (base) + 5 (surcharge)
+        assertThat(result.getTotalPrice()).isEqualByComparingTo("105.00"));
+        assertThat(result.getComponents()).hasSize(2); // BASE_PRICE + DEMAND_SURGE
+        assertThat(result.getComponents().stream().anyMatch(c -> "DEMAND_SURGE".equals(c.getCode()) && c.getAmount().compareTo(dynamicSurchargeAmount) == 0)).isTrue();
     }
 
+    @Test
+    void getPriceDetail_finalPriceClampedToZero_ifDiscountsExceedPrice() {
+        // Base price 10.00
+        item.setBasePrice(new BigDecimal("10.00"));
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        // Bulk discount of 120% (effectively -12.00)
+        BulkPricingRuleEntity excessiveDiscountRule = BulkPricingRuleEntity.builder()
+            .minQuantity(1).discountPercentage(new BigDecimal("120.00")).build();
+        when(bulkPricingRuleRepository.findActiveApplicableRules(eq(itemId), eq(1), any(Instant.class)))
+            .thenReturn(List.of(excessiveDiscountRule));
+
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("0.00"); // Clamped from -2.00
+        assertThat(result.getTotalPrice()).isEqualByComparingTo("0.00"));
+
+        PricingComponent bulkDiscountComp = result.getComponents().stream()
+            .filter(c -> "BULK_DISCOUNT".equals(c.getCode())).findFirst().orElseThrow();
+        assertThat(bulkDiscountComp.getAmount()).isEqualByComparingTo("-12.00"); // Discount amount is still calculated fully
+    }
+
+    // TODO: Add test for manual override when that logic is implemented
+    // TODO: Add test for interaction of override, bulk, and dynamic components
 
     @Test
     void getPriceDetail_itemNotActive_throwsException() {

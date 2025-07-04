@@ -92,6 +92,17 @@ app:
       cart-checked-out: cart.checked_out
       # For SearchIndexer
       catalog-events-for-indexing: catalog.events.for.indexing # Could be a single topic or multiple
+  outbox:
+    poll:
+      fixed-delay-ms: 10000 # Poll every 10 seconds
+      initial-delay-ms: 5000 # Start polling 5 seconds after app start
+      batch-size: 100 # Process up to 100 events per poll
+      max-attempts: 5 # Max attempts to publish an event before marking as failed (processed)
+      retry-delay-seconds: 300 # Wait 5 minutes before retrying a failed event (if not max attempts)
+    cleanup:
+      cron: "0 0 3 * * ?" # Daily at 3 AM
+      retention-days: "30" # Keep processed events for 30 days
+
 
 # Default active profile
 # spring.profiles.active: dev

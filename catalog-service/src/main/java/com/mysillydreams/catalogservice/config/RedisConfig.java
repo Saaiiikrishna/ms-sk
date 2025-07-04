@@ -18,9 +18,9 @@ import java.time.Duration;
 @Configuration
 public class RedisConfig {
 
-    // Cache name for carts
+    // Cache name for carts (used by RedisCacheManager if @Cacheable is used)
     public static final String CART_CACHE_NAME = "activeCarts";
-    public static final String CART_KEY_PREFIX = "cartDto::user::"; // Prefix for keys to avoid collisions
+    // CART_KEY_PREFIX is now in CacheKeyConstants
 
     @Bean
     public RedisTemplate<String, CartDto> cartDtoRedisTemplate(RedisConnectionFactory connectionFactory) {

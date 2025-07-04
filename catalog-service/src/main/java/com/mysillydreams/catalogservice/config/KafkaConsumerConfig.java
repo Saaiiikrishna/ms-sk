@@ -1,7 +1,6 @@
 package com.mysillydreams.catalogservice.config;
 
-import com.mysillydreams.catalogservice.kafka.event.CatalogItemEvent;
-import com.mysillydreams.catalogservice.kafka.event.CategoryEvent;
+import com.mysillydreams.catalogservice.kafka.event.*; // Import all events
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -121,4 +120,61 @@ public class KafkaConsumerConfig {
     // The default one can remain for CatalogItemEvent or be renamed.
     // If @KafkaListener does not specify a factory, it looks for "kafkaListenerContainerFactory".
     // So, the existing one is fine for CatalogItemEvent listeners.
+
+    // Factory for PriceUpdatedEvent
+    @Bean
+    public ConsumerFactory<String, PriceUpdatedEvent> priceUpdatedEventConsumerFactory() {
+        Map<String, Object> props = consumerConfigs();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, PriceUpdatedEvent.class.getName());
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                new ErrorHandlingDeserializer<>(new JsonDeserializer<>(PriceUpdatedEvent.class, false))
+        );
+    }
+
+    @Bean("priceUpdatedEventKafkaListenerContainerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, PriceUpdatedEvent> priceUpdatedEventKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, PriceUpdatedEvent> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(priceUpdatedEventConsumerFactory());
+        return factory;
+    }
+
+    // Factory for BulkPricingRuleEvent
+    @Bean
+    public ConsumerFactory<String, BulkPricingRuleEvent> bulkPricingRuleEventConsumerFactory() {
+        Map<String, Object> props = consumerConfigs();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, BulkPricingRuleEvent.class.getName());
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                new ErrorHandlingDeserializer<>(new JsonDeserializer<>(BulkPricingRuleEvent.class, false))
+        );
+    }
+
+    @Bean("bulkPricingRuleEventKafkaListenerContainerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, BulkPricingRuleEvent> bulkPricingRuleEventKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, BulkPricingRuleEvent> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(bulkPricingRuleEventConsumerFactory());
+        return factory;
+    }
+
+    // Factory for StockLevelChangedEvent
+    @Bean
+    public ConsumerFactory<String, StockLevelChangedEvent> stockLevelChangedEventConsumerFactory() {
+        Map<String, Object> props = consumerConfigs();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, StockLevelChangedEvent.class.getName());
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                new ErrorHandlingDeserializer<>(new JsonDeserializer<>(StockLevelChangedEvent.class, false))
+        );
+    }
+
+    @Bean("stockLevelChangedEventKafkaListenerContainerFactory")
+    public ConcurrentKafkaListenerContainerFactory<String, StockLevelChangedEvent> stockLevelChangedEventKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, StockLevelChangedEvent> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(stockLevelChangedEventConsumerFactory());
+        return factory;
+    }
 }

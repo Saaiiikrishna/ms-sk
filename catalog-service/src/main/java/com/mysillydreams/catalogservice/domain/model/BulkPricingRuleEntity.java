@@ -54,6 +54,9 @@ public class BulkPricingRuleEntity {
     @Builder.Default
     private boolean active = true;
 
+    @Version
+    private Long version; // For optimistic locking
+
 
     @Override
     public boolean equals(Object o) {

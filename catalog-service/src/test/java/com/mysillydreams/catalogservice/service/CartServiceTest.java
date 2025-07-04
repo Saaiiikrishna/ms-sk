@@ -65,15 +65,25 @@ public class CartServiceTest {
 
         activeCart = CartEntity.builder().id(cartId).userId(userId).status(CartStatus.ACTIVE).items(new ArrayList<>()).version(0L).createdAt(Instant.now()).updatedAt(Instant.now()).build();
 
-        // Default PriceDetailDto mock
+        // Default PriceDetailDto mock - now returns the new structure
         when(pricingService.getPriceDetail(any(UUID.class), anyInt())).thenAnswer(invocation -> {
             UUID iId = invocation.getArgument(0);
             int qty = invocation.getArgument(1);
-            BigDecimal basePrice = iId.equals(itemId1) ? productItem1.getBasePrice() : serviceItem2.getBasePrice();
+            CatalogItemEntity currentItem = iId.equals(itemId1) ? productItem1 : serviceItem2;
+            BigDecimal basePrice = currentItem.getBasePrice();
+
+            // Simulate a simple PriceDetailDto with no complex components for default mock
+            List<PricingComponent> components = List.of(
+                PricingComponent.builder().code("CATALOG_BASE_PRICE").description("Base Price").amount(basePrice).build()
+            );
+
             return PriceDetailDto.builder()
-                    .itemId(iId).quantity(qty).basePrice(basePrice)
-                    .applicableDiscountPercentage(BigDecimal.ZERO)
-                    .discountedUnitPrice(basePrice) // No discount by default in tests
+                    .itemId(iId)
+                    .quantity(qty)
+                    .basePrice(basePrice)
+                    .overridePrice(null) // No override by default
+                    .components(components)
+                    .finalUnitPrice(basePrice) // No discount by default
                     .totalPrice(basePrice.multiply(BigDecimal.valueOf(qty)))
                     .build();
         });
@@ -114,6 +124,8 @@ public class CartServiceTest {
         assertThat(result.getItems()).hasSize(1);
         assertThat(result.getItems().get(0).getCatalogItemId()).isEqualTo(itemId1);
         assertThat(result.getItems().get(0).getQuantity()).isEqualTo(2);
+        // Verify that the CartItemEntity stored the finalUnitPrice from PriceDetailDto
+        assertThat(activeCart.getItems().get(0).getUnitPrice()).isEqualByComparingTo(productItem1.getBasePrice());
         verify(stockService).reserveStock(itemId1, 2);
         verify(cartRepository).save(activeCart);
     }
@@ -247,57 +259,73 @@ public class CartServiceTest {
 
     @Test
     void convertToCartDto_calculatesTotalsCorrectly() {
-        // Item 1: Laptop, 1000.00, qty 1. Rule: 10% off for >=1. PriceDetail: discountedUnitPrice=900
-        // Item 2: Support, 50.00, qty 2. No discount. PriceDetail: discountedUnitPrice=50
+    void convertToCartDto_calculatesTotalsCorrectly_withNewPriceDetailStructure() {
+        // Item 1 (productItem1): basePrice 1000.00. Let's say 10% bulk discount applies.
+        // Item 2 (serviceItem2): basePrice 50.00. No discounts.
 
-        CartItemEntity cartItem1 = CartItemEntity.builder().id(UUID.randomUUID()).cart(activeCart).catalogItem(productItem1).quantity(1).unitPrice(new BigDecimal("900.00")).build(); // Stored unit price
-        CartItemEntity cartItem2 = CartItemEntity.builder().id(UUID.randomUUID()).cart(activeCart).catalogItem(serviceItem2).quantity(2).unitPrice(new BigDecimal("50.00")).build();
-        activeCart.getItems().addAll(List.of(cartItem1, cartItem2));
+        // Setup cart items in the activeCart
+        CartItemEntity cartItem1Entity = CartItemEntity.builder()
+            .id(UUID.randomUUID()).cart(activeCart).catalogItem(productItem1).quantity(1)
+            .unitPrice(new BigDecimal("900.00")) // This is the final unit price stored from a previous add/update
+            .build();
+        CartItemEntity cartItem2Entity = CartItemEntity.builder()
+            .id(UUID.randomUUID()).cart(activeCart).catalogItem(serviceItem2).quantity(2)
+            .unitPrice(new BigDecimal("50.00")) // Stored final unit price
+            .build();
+        activeCart.getItems().addAll(List.of(cartItem1Entity, cartItem2Entity));
 
-        // Mock PricingService to return specific details for each item
+        // Mock PricingService.getPriceDetail to return new DTO structure
+        // For productItem1 (qty 1) - simulate 10% discount
+        List<PricingComponent> componentsItem1 = List.of(
+            PricingComponent.builder().code("CATALOG_BASE_PRICE").description("Base").amount(new BigDecimal("1000.00")).build(),
+            PricingComponent.builder().code("BULK_DISCOUNT").description("10% off").amount(new BigDecimal("-100.00")).build()
+        );
         PriceDetailDto priceDetailItem1 = PriceDetailDto.builder()
-            .itemId(itemId1).quantity(1).basePrice(new BigDecimal("1000.00"))
-            .applicableDiscountPercentage(new BigDecimal("10.00"))
-            .discountedUnitPrice(new BigDecimal("900.00"))
-            .totalPrice(new BigDecimal("900.00")).build();
+            .itemId(itemId1).quantity(1).basePrice(new BigDecimal("1000.00")).overridePrice(null)
+            .components(componentsItem1)
+            .finalUnitPrice(new BigDecimal("900.00"))
+            .totalPrice(new BigDecimal("900.00"))
+            .build();
         when(pricingService.getPriceDetail(itemId1, 1)).thenReturn(priceDetailItem1);
 
+        // For serviceItem2 (qty 2) - no discount
+         List<PricingComponent> componentsItem2 = List.of(
+            PricingComponent.builder().code("CATALOG_BASE_PRICE").description("Base").amount(new BigDecimal("50.00")).build()
+        );
         PriceDetailDto priceDetailItem2 = PriceDetailDto.builder()
-            .itemId(itemId2).quantity(2).basePrice(new BigDecimal("50.00"))
-            .applicableDiscountPercentage(BigDecimal.ZERO)
-            .discountedUnitPrice(new BigDecimal("50.00"))
-            .totalPrice(new BigDecimal("100.00")).build();
+            .itemId(itemId2).quantity(2).basePrice(new BigDecimal("50.00")).overridePrice(null)
+            .components(componentsItem2)
+            .finalUnitPrice(new BigDecimal("50.00"))
+            .totalPrice(new BigDecimal("100.00")) // 50 * 2
+            .build();
         when(pricingService.getPriceDetail(itemId2, 2)).thenReturn(priceDetailItem2);
 
-
-        CartDto cartDto = cartService.getOrCreateCart(userId); // This will trigger convertToCartDto via getActiveCartEntityForUser -> convert
-        // Or more directly if activeCart is already correctly populated:
-        // CartDto cartDto = cartService.convertToCartDto(activeCart); // if convertToCartDto was public
-        // For this test, let's assume getOrCreateCart returns a cart that then gets converted.
-        // We need to ensure the cartRepository returns our activeCart with items.
+        // When CartService tries to get the cart (e.g. for getCartTotals)
         when(cartRepository.findByUserIdAndStatus(userId, CartStatus.ACTIVE)).thenReturn(Optional.of(activeCart));
 
+        CartDto resultDto = cartService.getCartTotals(userId); // This calls convertToCartDto internally
 
-        CartDto resultDto = cartService.getCartTotals(userId); // This calls getActiveCartEntityForUser then convertToCartDto
+        // Expected calculations based on PriceDetailDto values:
+        // Item 1: Final Unit Price = 900.00, Qty = 1, Line Total = 900.00. Original Base = 1000.00. Discount = 100.00
+        // Item 2: Final Unit Price = 50.00, Qty = 2, Line Total = 100.00. Original Base = 50.00. Discount = 0.00
 
-        // Item 1: 1 * 900 = 900. Original 1000. Discount 100.
-        // Item 2: 2 * 50 = 100. Original 100. Discount 0.
-        // Subtotal (sum of final line totals) = 900 + 100 = 1000
-        // TotalDiscount = 100 (from item1) + 0 (from item2) = 100
-        // FinalTotal = 1000 (same as subtotal here)
+        // Cart Totals:
+        // Subtotal (sum of line totals using finalUnitPrice) = 900.00 + 100.00 = 1000.00
+        // Total Discount Amount = 100.00 (from item1) + 0.00 (from item2) = 100.00
+        // Final Total = Subtotal = 1000.00 (assuming no further cart-level adjustments)
 
         assertThat(resultDto.getSubtotal()).isEqualByComparingTo("1000.00");
         assertThat(resultDto.getTotalDiscountAmount()).isEqualByComparingTo("100.00");
         assertThat(resultDto.getFinalTotal()).isEqualByComparingTo("1000.00");
 
         assertThat(resultDto.getItems()).hasSize(2);
-        CartItemDetailDto detail1 = resultDto.getItems().stream().filter(i -> i.getCatalogItemId().equals(itemId1)).findFirst().get();
-        assertThat(detail1.getOriginalUnitPrice()).isEqualByComparingTo("1000.00");
-        assertThat(detail1.getFinalUnitPrice()).isEqualByComparingTo("900.00");
-        assertThat(detail1.getDiscountAppliedPerUnit()).isEqualByComparingTo("100.00");
-        assertThat(detail1.getLineItemTotal()).isEqualByComparingTo("900.00");
+        CartItemDetailDto detail1 = resultDto.getItems().stream().filter(i -> i.getCatalogItemId().equals(itemId1)).findFirst().orElseThrow();
+        assertThat(detail1.getOriginalUnitPrice()).isEqualByComparingTo("1000.00"); // from PriceDetailDto.basePrice
+        assertThat(detail1.getFinalUnitPrice()).isEqualByComparingTo("900.00");   // from PriceDetailDto.finalUnitPrice
+        assertThat(detail1.getDiscountAppliedPerUnit()).isEqualByComparingTo("100.00"); // base - final
+        assertThat(detail1.getLineItemTotal()).isEqualByComparingTo("900.00");    // from PriceDetailDto.totalPrice (for that line)
 
-        CartItemDetailDto detail2 = resultDto.getItems().stream().filter(i -> i.getCatalogItemId().equals(itemId2)).findFirst().get();
+        CartItemDetailDto detail2 = resultDto.getItems().stream().filter(i -> i.getCatalogItemId().equals(itemId2)).findFirst().orElseThrow();
         assertThat(detail2.getOriginalUnitPrice()).isEqualByComparingTo("50.00");
         assertThat(detail2.getFinalUnitPrice()).isEqualByComparingTo("50.00");
         assertThat(detail2.getDiscountAppliedPerUnit()).isEqualByComparingTo("0.00");

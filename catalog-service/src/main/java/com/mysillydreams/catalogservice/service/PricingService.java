@@ -4,16 +4,23 @@ import com.mysillydreams.catalogservice.domain.model.BulkPricingRuleEntity;
 import com.mysillydreams.catalogservice.domain.model.CatalogItemEntity;
 import com.mysillydreams.catalogservice.domain.repository.BulkPricingRuleRepository;
 import com.mysillydreams.catalogservice.domain.repository.CatalogItemRepository;
+// TODO: Add PriceOverrideRepository if/when manual overrides are implemented
 import com.mysillydreams.catalogservice.dto.BulkPricingRuleDto;
 import com.mysillydreams.catalogservice.dto.CreateBulkPricingRuleRequest;
 import com.mysillydreams.catalogservice.dto.PriceDetailDto;
+import com.mysillydreams.catalogservice.dto.PricingComponent;
 import com.mysillydreams.catalogservice.exception.InvalidRequestException;
 import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import com.mysillydreams.catalogservice.kafka.event.BulkPricingRuleEvent;
-import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
+// import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService; // No longer direct use
+import com.mysillydreams.catalogservice.service.pricing.DynamicPricingEngine;
+import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException; // Import for Retryable
+import org.springframework.retry.annotation.Backoff; // Import for Retryable
+import org.springframework.retry.annotation.Retryable; // Import for Retryable
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,10 +39,14 @@ public class PricingService {
 
     private final BulkPricingRuleRepository bulkPricingRuleRepository;
     private final CatalogItemRepository catalogItemRepository;
-    private final KafkaProducerService kafkaProducerService;
+    // private final PriceOverrideRepository priceOverrideRepository; // TODO: Inject when implemented
+    private final DynamicPricingEngine dynamicPricingEngine;
+    // private final KafkaProducerService kafkaProducerService; // Replaced
+    private final OutboxEventService outboxEventService; // Added
 
-    @Value("${app.kafka.topic.bulk-rule-added}") // Assuming one topic for all rule events, distinguished by eventType
-    private String bulkRuleEventTopic; // Example: "bulk.pricing.rule.events"
+
+    @Value("${app.kafka.topic.bulk-rule-added}") // This might need to be a more generic topic if eventType field is used, or keep specific.
+    private String bulkRuleEventTopic;
 
     @Transactional
     public BulkPricingRuleDto createBulkPricingRule(CreateBulkPricingRuleRequest request) {
@@ -56,7 +67,7 @@ public class PricingService {
                 .build();
 
         BulkPricingRuleEntity savedRule = bulkPricingRuleRepository.save(rule);
-        publishBulkPricingRuleEvent("bulk.pricing.rule.added", savedRule);
+        publishBulkPricingRuleEventViaOutbox("BulkPricingRule", savedRule.getId(), bulkRuleEventTopic, "bulk.pricing.rule.added", savedRule);
         log.info("Bulk pricing rule created successfully with ID: {}", savedRule.getId());
         return convertToDto(savedRule);
     }
@@ -81,8 +92,14 @@ public class PricingService {
     }
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 100, multiplier = 2)
+    )
     public BulkPricingRuleDto updateBulkPricingRule(UUID ruleId, CreateBulkPricingRuleRequest request) {
         log.info("Updating bulk pricing rule with ID: {}", ruleId);
+        // Re-fetch inside retryable method
         BulkPricingRuleEntity rule = bulkPricingRuleRepository.findById(ruleId)
                 .orElseThrow(() -> new ResourceNotFoundException("BulkPricingRule", "id", ruleId));
 
@@ -102,7 +119,7 @@ public class PricingService {
         rule.setActive(request.isActive());
 
         BulkPricingRuleEntity updatedRule = bulkPricingRuleRepository.save(rule);
-        publishBulkPricingRuleEvent("bulk.pricing.rule.updated", updatedRule);
+        publishBulkPricingRuleEventViaOutbox("BulkPricingRule", updatedRule.getId(), bulkRuleEventTopic, "bulk.pricing.rule.updated", updatedRule);
         log.info("Bulk pricing rule updated successfully with ID: {}", updatedRule.getId());
         return convertToDto(updatedRule);
     }
@@ -113,8 +130,9 @@ public class PricingService {
         BulkPricingRuleEntity rule = bulkPricingRuleRepository.findById(ruleId)
                 .orElseThrow(() -> new ResourceNotFoundException("BulkPricingRule", "id", ruleId));
 
+        // Publish event before actual deletion to capture state
+        publishBulkPricingRuleEventViaOutbox("BulkPricingRule", rule.getId(), bulkRuleEventTopic, "bulk.pricing.rule.deleted", rule);
         bulkPricingRuleRepository.delete(rule);
-        publishBulkPricingRuleEvent("bulk.pricing.rule.deleted", rule); // Send event with rule details before it's gone
         log.info("Bulk pricing rule deleted successfully with ID: {}", ruleId);
     }
 
@@ -130,49 +148,95 @@ public class PricingService {
                 .orElseThrow(() -> new ResourceNotFoundException("CatalogItem", "id", itemId));
 
         if (!item.isActive()) {
-            throw new InvalidRequestException("Item " + itemId + " is not active.");
+            // Or return a specific PriceDetailDto indicating unavailability
+            throw new InvalidRequestException("Item " + itemId + " is not active and cannot be priced.");
         }
 
-        BigDecimal basePrice = item.getBasePrice();
-        BigDecimal applicableDiscountPct = BigDecimal.ZERO;
-        BigDecimal discountedUnitPrice = basePrice;
+        List<PricingComponent> finalComponents = new ArrayList<>();
+        BigDecimal currentCalculatedPrice = item.getBasePrice(); // Start with actual catalog base price
 
-        // Find the best applicable bulk pricing rule
-        List<BulkPricingRuleEntity> rules = bulkPricingRuleRepository.findActiveApplicableRules(itemId, quantity, Instant.now());
+        finalComponents.add(PricingComponent.builder()
+            .code("CATALOG_BASE_PRICE")
+            .description("Catalog Base Price")
+            .amount(item.getBasePrice().setScale(2, RoundingMode.HALF_UP))
+            .build());
 
-        // "Best" rule could be highest discount, or highest minQty that applies.
-        // The query sorts by minQuantity DESC, so the first one is the most specific for the quantity.
-        // If multiple rules have the same minQuantity, we might need another tie-breaker (e.g., highest discount).
-        // For now, let's assume the query's ordering is sufficient or pick highest discount among those with highest min_qty.
-        Optional<BulkPricingRuleEntity> bestRule = rules.stream()
-            // .filter(r -> r.getMinQuantity() <= quantity) // Already handled by findActiveApplicableRules query
-            .max(Comparator.comparing(BulkPricingRuleEntity::getDiscountPercentage)); // Pick highest discount among applicable
+        // TODO: Implement PriceOverrideEntity and repository for manual overrides
+        // Optional<PriceOverrideEntity> override = priceOverrideRepository.findActiveOverride(itemId, Instant.now());
+        BigDecimal overridePrice = null; // Placeholder for manual override price
+        // if (override.isPresent()) {
+        //     overridePrice = override.get().getOverridePrice();
+        //     BigDecimal diffToOverride = overridePrice.subtract(item.getBasePrice());
+        //     finalComponents.add(PricingComponent.builder()
+        //         .code("MANUAL_OVERRIDE_ADJUSTMENT")
+        //         .description("Manual Price Override Adjustment")
+        //         .amount(diffToOverride.setScale(2, RoundingMode.HALF_UP))
+        //         .build());
+        //     currentCalculatedPrice = overridePrice; // This is the new reference
+        //     log.debug("Applied manual override price: {} for item {}", currentCalculatedPrice, itemId);
+        // }
 
-        if (bestRule.isPresent()) {
-            applicableDiscountPct = bestRule.get().getDiscountPercentage();
-            BigDecimal discountFactor = BigDecimal.ONE.subtract(applicableDiscountPct.divide(new BigDecimal("100.00"), 4, RoundingMode.HALF_UP));
-            discountedUnitPrice = basePrice.multiply(discountFactor).setScale(2, RoundingMode.HALF_UP);
+        // Apply Bulk Pricing Rules (calculated based on currentCalculatedPrice, which is base or override)
+        List<BulkPricingRuleEntity> applicableRules = bulkPricingRuleRepository.findActiveApplicableRules(itemId, quantity, Instant.now());
+        Optional<BulkPricingRuleEntity> bestBulkRule = applicableRules.stream()
+                .max(Comparator.comparing(BulkPricingRuleEntity::getDiscountPercentage));
+
+        if (bestBulkRule.isPresent()) {
+            BulkPricingRuleEntity rule = bestBulkRule.get();
+            BigDecimal discountPercentage = rule.getDiscountPercentage();
+            // Discount is applied on the currentCalculatedPrice (base or override)
+            BigDecimal discountAmount = currentCalculatedPrice.multiply(discountPercentage)
+                    .divide(new BigDecimal("100.00"), 2, RoundingMode.HALF_UP);
+
+            finalComponents.add(PricingComponent.builder()
+                    .code("BULK_DISCOUNT")
+                    .description(String.format("Bulk discount: %s%% off for %d+ items", discountPercentage.stripTrailingZeros().toPlainString(), rule.getMinQuantity()))
+                    .amount(discountAmount.negate().setScale(2, RoundingMode.HALF_UP)) // Negative for discount
+                    .build());
+            currentCalculatedPrice = currentCalculatedPrice.subtract(discountAmount); // Apply discount
+            log.debug("Applied bulk discount: {} for item {} based on rule ID {}", discountAmount.negate(), itemId, rule.getId());
         }
 
-        BigDecimal totalPrice = discountedUnitPrice.multiply(new BigDecimal(quantity)).setScale(2, RoundingMode.HALF_UP);
+        // Apply Dynamic Pricing Components (calculated based on currentCalculatedPrice after bulk discounts)
+        List<PricingComponent> dynamicAdjustmentComponents = dynamicPricingEngine.evaluate(itemId, quantity, currentCalculatedPrice.setScale(2, RoundingMode.HALF_UP));
+        if (dynamicAdjustmentComponents != null && !dynamicAdjustmentComponents.isEmpty()) {
+            for(PricingComponent dynamicComp : dynamicAdjustmentComponents) {
+                 finalComponents.add(dynamicComp); // Assume amount is already correctly signed
+                 currentCalculatedPrice = currentCalculatedPrice.add(dynamicComp.getAmount()); // Apply dynamic adjustment
+            }
+            log.debug("Applied {} dynamic pricing components for item {}", dynamicAdjustmentComponents.size(), itemId);
+        }
+
+        BigDecimal finalUnitPrice = currentCalculatedPrice.setScale(2, RoundingMode.HALF_UP);
+
+        // Ensure final unit price is not negative
+        if (finalUnitPrice.compareTo(BigDecimal.ZERO) < 0) {
+            log.warn("Calculated final unit price for item {} is negative ({}). Clamping to zero.", itemId, finalUnitPrice);
+            finalUnitPrice = BigDecimal.ZERO;
+            // If price becomes zero due to clamping, we might want to add a component indicating this.
+            // Or adjust the last applied discount so total is not negative. For now, just clamp.
+        }
+
+        // Recalculate totalPrice based on the final, potentially clamped, unit price
+        BigDecimal totalPrice = finalUnitPrice.multiply(new BigDecimal(quantity)).setScale(2, RoundingMode.HALF_UP);
 
         return PriceDetailDto.builder()
                 .itemId(itemId)
                 .quantity(quantity)
-                .basePrice(basePrice)
-                .applicableDiscountPercentage(applicableDiscountPct)
-                .discountedUnitPrice(discountedUnitPrice)
-                .totalPrice(totalPrice)
+                .basePrice(item.getBasePrice().setScale(2, RoundingMode.HALF_UP)) // Original catalog base price
+                .overridePrice(overridePrice != null ? overridePrice.setScale(2, RoundingMode.HALF_UP) : null) // Actual override price if set
+                .components(finalComponents) // The full list of components including base, override adjustment, bulk, dynamic
+                .finalUnitPrice(finalUnitPrice) // Final price per unit after all components
+                .totalPrice(totalPrice) // quantity * finalUnitPrice
                 .build();
     }
 
-
-    private void publishBulkPricingRuleEvent(String eventType, BulkPricingRuleEntity rule) {
+    private void publishBulkPricingRuleEventViaOutbox(String aggregateType, UUID aggregateId, String topic, String eventType, BulkPricingRuleEntity rule) {
         BulkPricingRuleEvent event = BulkPricingRuleEvent.builder()
-                .eventType(eventType)
+                .eventType(eventType) // DTO's eventType field
                 .ruleId(rule.getId())
                 .itemId(rule.getCatalogItem().getId())
-                .itemSku(rule.getCatalogItem().getSku()) // Denormalized
+                .itemSku(rule.getCatalogItem().getSku())
                 .minQuantity(rule.getMinQuantity())
                 .discountPercentage(rule.getDiscountPercentage())
                 .validFrom(rule.getValidFrom())
@@ -180,8 +244,8 @@ public class PricingService {
                 .active(rule.isActive())
                 .timestamp(Instant.now())
                 .build();
-        // Using a generic topic from properties, or could be specific if defined
-        kafkaProducerService.sendMessage(bulkRuleEventTopic, rule.getId().toString(), event);
+        // The OutboxEventEntity.eventType will be the canonical event type string like "bulk.pricing.rule.added".
+        outboxEventService.saveOutboxEvent(aggregateType, aggregateId, eventType, topic, event);
     }
 
     private BulkPricingRuleDto convertToDto(BulkPricingRuleEntity entity) {

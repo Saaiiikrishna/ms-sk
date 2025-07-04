@@ -65,6 +65,9 @@ public class CatalogItemEntity {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Version
+    private Long version; // For optimistic locking
+
     // Note: StockLevelEntity, PriceHistoryEntity, BulkPricingRuleEntity will link to this.
 
     @Override

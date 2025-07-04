@@ -15,12 +15,16 @@ import com.mysillydreams.catalogservice.exception.InvalidRequestException;
 import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import com.mysillydreams.catalogservice.kafka.event.CatalogItemEvent;
 import com.mysillydreams.catalogservice.kafka.event.PriceUpdatedEvent;
-import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
+// import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService; // No longer direct use
+import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException; // Import for Retryable
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.retry.annotation.Backoff; // Import for Retryable
+import org.springframework.retry.annotation.Retryable; // Import for Retryable
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,8 +40,9 @@ public class ItemService {
     private final CatalogItemRepository itemRepository;
     private final CategoryRepository categoryRepository;
     private final PriceHistoryRepository priceHistoryRepository;
-    private final StockLevelRepository stockLevelRepository; // For initial stock record for products
-    private final KafkaProducerService kafkaProducerService;
+    private final StockLevelRepository stockLevelRepository;
+    // private final KafkaProducerService kafkaProducerService; // Replaced
+    private final OutboxEventService outboxEventService; // Added
 
     @Value("${app.kafka.topic.item-created}")
     private String itemCreatedTopic;
@@ -100,10 +105,10 @@ public class ItemService {
 
 
         CatalogItemDto itemDto = convertToDto(savedItem);
-        publishItemEvent(itemCreatedTopic, "catalog.item.created", savedItem);
-        // PriceUpdatedEvent is not strictly necessary here as it's the initial price,
-        // but if consumers expect it for all price settings, it could be published.
-        // For now, ItemEvent includes the basePrice.
+        publishItemEventViaOutbox("CatalogItem", savedItem.getId(), itemCreatedTopic, "catalog.item.created", savedItem);
+
+        // If initial price creation should also be an event:
+        // publishPriceUpdatedEventViaOutbox("CatalogItem", savedItem.getId(), savedItem, BigDecimal.ZERO, savedItem.getBasePrice()); // oldPrice=0 for new item
 
         log.info("Catalog item created successfully with ID: {}", savedItem.getId());
         return itemDto;
@@ -149,8 +154,14 @@ public class ItemService {
 
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 100, multiplier = 2)
+    )
     public CatalogItemDto updateItem(UUID itemId, CreateCatalogItemRequest request) {
         log.info("Updating catalog item with ID: {}", itemId);
+        // Re-fetch inside retryable method to get latest version
         CatalogItemEntity item = itemRepository.findById(itemId)
                 .orElseThrow(() -> new ResourceNotFoundException("CatalogItem", "id", itemId));
 
@@ -205,12 +216,12 @@ public class ItemService {
             priceHistoryRepository.save(priceChange);
 
             // Publish price updated event
-            publishPriceUpdatedEvent(item, oldPrice, request.getBasePrice());
+            publishPriceUpdatedEventViaOutbox("CatalogItem", item.getId(), item, oldPrice, request.getBasePrice());
         }
 
         CatalogItemEntity updatedItem = itemRepository.save(item);
         CatalogItemDto itemDto = convertToDto(updatedItem);
-        publishItemEvent(itemUpdatedTopic, "catalog.item.updated", updatedItem);
+        publishItemEventViaOutbox("CatalogItem", updatedItem.getId(), itemUpdatedTopic, "catalog.item.updated", updatedItem);
         log.info("Catalog item updated successfully with ID: {}", updatedItem.getId());
         return itemDto;
     }
@@ -239,18 +250,25 @@ public class ItemService {
         // bulkPricingRuleRepository.deleteByCatalogItemId(itemId); // If we want to delete rules
 
 
+        // Important: Publish event data BEFORE deleting the entity, so all fields are available for the event payload.
+        // Or, construct the event payload from the 'item' object before deleting.
+        publishItemEventViaOutbox("CatalogItem", item.getId(), itemDeletedTopic, "catalog.item.deleted", item);
         itemRepository.delete(item);
-        publishItemEvent(itemDeletedTopic, "catalog.item.deleted", item); // Send event before actual deletion or with all details
         log.info("Catalog item deleted successfully with ID: {}", itemId);
     }
 
     @Transactional
+    @Retryable(
+        value = { OptimisticLockException.class, CannotAcquireLockException.class },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 100, multiplier = 2)
+    )
     public CatalogItemDto updateItemPrice(UUID itemId, BigDecimal newPrice) {
         log.info("Updating price for item ID: {} to new price: {}", itemId, newPrice);
         if (newPrice == null || newPrice.compareTo(BigDecimal.ZERO) <= 0) {
             throw new InvalidRequestException("New price must be greater than zero.");
         }
-
+        // Re-fetch inside retryable method
         CatalogItemEntity item = itemRepository.findById(itemId)
             .orElseThrow(() -> new ResourceNotFoundException("CatalogItem", "id", itemId));
 
@@ -269,34 +287,38 @@ public class ItemService {
             .build();
         priceHistoryRepository.save(priceChange);
 
-        CatalogItemEntity updatedItem = itemRepository.save(item); // Save item to update its basePrice field
+        CatalogItemEntity updatedItem = itemRepository.save(item);
 
-        publishPriceUpdatedEvent(updatedItem, oldPrice, newPrice);
-        publishItemEvent(itemUpdatedTopic, "catalog.item.updated", updatedItem); // Also send a general item update
+        publishPriceUpdatedEventViaOutbox("CatalogItem", updatedItem.getId(), updatedItem, oldPrice, newPrice);
+        // A general item update event might also be warranted if other systems care about any item change,
+        // not just price-specific ones. The PriceUpdatedEvent is more specific.
+        // For now, let's assume PriceUpdatedEvent is sufficient for price changes and ItemUpdated for other field changes.
+        // If basePrice change should also trigger a generic item.updated, then:
+        publishItemEventViaOutbox("CatalogItem", updatedItem.getId(), itemUpdatedTopic, "catalog.item.updated", updatedItem);
+
 
         log.info("Price updated successfully for item ID: {}. Old price: {}, New price: {}", itemId, oldPrice, newPrice);
         return convertToDto(updatedItem);
     }
 
-
-    private void publishItemEvent(String topic, String eventType, CatalogItemEntity item) {
+    private void publishItemEventViaOutbox(String aggregateType, UUID aggregateId, String topic, String eventType, CatalogItemEntity item) {
         CatalogItemEvent event = CatalogItemEvent.builder()
                 .eventType(eventType)
                 .itemId(item.getId())
                 .categoryId(item.getCategory().getId())
                 .sku(item.getSku())
                 .name(item.getName())
-                .description(item.getDescription()) // Be mindful of event size with large descriptions
+                .description(item.getDescription())
                 .itemType(item.getItemType())
                 .basePrice(item.getBasePrice())
                 .metadata(item.getMetadata())
                 .active(item.isActive())
                 .timestamp(Instant.now())
                 .build();
-        kafkaProducerService.sendMessage(topic, item.getId().toString(), event);
+        outboxEventService.saveOutboxEvent(aggregateType, aggregateId, eventType, topic, event);
     }
 
-    private void publishPriceUpdatedEvent(CatalogItemEntity item, BigDecimal oldPrice, BigDecimal newPrice) {
+    private void publishPriceUpdatedEventViaOutbox(String aggregateType, UUID aggregateId, CatalogItemEntity item, BigDecimal oldPrice, BigDecimal newPrice) {
         PriceUpdatedEvent event = PriceUpdatedEvent.builder()
                 .itemId(item.getId())
                 .sku(item.getSku())
@@ -304,7 +326,7 @@ public class ItemService {
                 .newPrice(newPrice)
                 .timestamp(Instant.now())
                 .build();
-        kafkaProducerService.sendMessage(priceUpdatedTopic, item.getId().toString(), event);
+        outboxEventService.saveOutboxEvent(aggregateType, aggregateId, "catalog.price.updated", priceUpdatedTopic, event);
     }
 
     private CatalogItemDto convertToDto(CatalogItemEntity entity) {
