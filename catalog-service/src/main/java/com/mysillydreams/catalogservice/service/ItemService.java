@@ -120,8 +120,11 @@ public class ItemService {
     }
 
     @Transactional(readOnly = true)
+    // CacheKeyConstants.CATALOG_ITEM_CACHE_NAME = "catalogItem"
+    // Key will be itemId.toString() by default if parameter name matches or using SpEL: key = "#itemId.toString()"
+    @org.springframework.cache.annotation.Cacheable(cacheNames = com.mysillydreams.catalogservice.config.CacheKeyConstants.CATALOG_ITEM_CACHE_NAME, key = "#itemId.toString()")
     public CatalogItemDto getItemById(UUID itemId) {
-        log.debug("Fetching catalog item by ID: {}", itemId);
+        log.info("Fetching catalog item by ID from DB: {}", itemId); // Log DB hit
         CatalogItemEntity item = itemRepository.findById(itemId)
                 .orElseThrow(() -> new ResourceNotFoundException("CatalogItem", "id", itemId));
         return convertToDto(item);

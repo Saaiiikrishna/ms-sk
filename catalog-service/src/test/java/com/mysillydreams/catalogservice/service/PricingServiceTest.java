@@ -41,8 +41,9 @@ public class PricingServiceTest {
     @Mock private BulkPricingRuleRepository bulkPricingRuleRepository;
     @Mock private CatalogItemRepository catalogItemRepository;
     // @Mock private KafkaProducerService kafkaProducerService; // No longer used directly by PricingService for bulk rule events
-    @Mock private OutboxEventService outboxEventService; // Used for bulk rule events
+    @Mock private OutboxEventService outboxEventService;
     @Mock private DynamicPricingEngine dynamicPricingEngine;
+    @Mock private com.mysillydreams.catalogservice.domain.repository.PriceOverrideRepository priceOverrideRepository; // Added mock
 
     @InjectMocks private PricingService pricingService;
 
@@ -263,5 +264,180 @@ public class PricingServiceTest {
         assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");
         assertThat(result.getComponents()).hasSize(1);
         assertThat(result.getComponents().get(0).getCode()).isEqualTo("CATALOG_BASE_PRICE");
+    }
+
+    @Test
+    // This test replaces the previous @Disabled one.
+    void getPriceDetail_activeOverride_takesPrecedenceOverDynamicAndBase() {
+        // Arrange: item with base $100, dynamic $80. Active override $90.
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(new BigDecimal("80.00")); // Dynamic is lower than override
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity activeOverride =
+                com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity.builder()
+                        .id(UUID.randomUUID())
+                        .catalogItem(item)
+                        .overridePrice(new BigDecimal("90.00"))
+                        .startTime(Instant.now().minusSeconds(3600)) // Started an hour ago
+                        .endTime(Instant.now().plusSeconds(3600))   // Ends in an hour
+                        .enabled(true)
+                        .build();
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId))
+                .thenReturn(Optional.of(activeOverride));
+
+        // Ensure no other adjustments for this specific test
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any()))
+                .thenReturn(Collections.emptyList());
+        // dynamicPricingEngine mock is already set to return empty list in setUp.
+
+        // Act
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Assert
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("90.00");
+        assertThat(result.getPriceSource()).isEqualTo("OVERRIDE");
+        assertThat(result.getOverridePrice()).isEqualByComparingTo("90.00");
+        assertThat(result.getDynamicPrice()).isEqualByComparingTo("80.00"); // DTO shows original dynamic price
+        assertThat(result.getBasePrice()).isEqualByComparingTo("100.00");  // DTO shows original base price
+        assertThat(result.getComponents()).hasSize(1);
+        assertThat(result.getComponents().get(0).getCode()).isEqualTo("OVERRIDE");
+        assertThat(result.getComponents().get(0).getAmount()).isEqualByComparingTo("90.00");
+    }
+
+    @Test
+    void getPriceDetail_overrideLowerThanDynamic_overrideWins() {
+        // Arrange: item with base $100, dynamic $80. Active override $70.
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(new BigDecimal("80.00"));
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity activeOverride =
+                com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity.builder()
+                        .overridePrice(new BigDecimal("70.00")) // Override is lower
+                        .startTime(null) // Effective immediately
+                        .endTime(null)   // No expiry
+                        .enabled(true)
+                        .build();
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId))
+                .thenReturn(Optional.of(activeOverride));
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+
+        // Act
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Assert
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("70.00");
+        assertThat(result.getPriceSource()).isEqualTo("OVERRIDE");
+        assertThat(result.getOverridePrice()).isEqualByComparingTo("70.00");
+    }
+
+    @Test
+    void getPriceDetail_overrideHigherThanDynamic_overrideWins() {
+        // Arrange: item with base $100, dynamic $80. Active override $95.
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(new BigDecimal("80.00"));
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity activeOverride =
+                com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity.builder()
+                        .overridePrice(new BigDecimal("95.00")) // Override is higher
+                        .enabled(true)
+                        .build();
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId))
+                .thenReturn(Optional.of(activeOverride));
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+
+        // Act
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Assert
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("95.00");
+        assertThat(result.getPriceSource()).isEqualTo("OVERRIDE");
+        assertThat(result.getOverridePrice()).isEqualByComparingTo("95.00");
+    }
+
+    @Test
+    void getPriceDetail_expiredOverride_fallsBackToDynamicPrice() {
+        // Arrange: item with base $100, dynamic $80. Expired override $70.
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(new BigDecimal("80.00"));
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        // priceOverrideRepository.findCurrentActiveOverrideForItem will return Optional.empty()
+        // because the service calls it with Instant.now(), and an expired override won't be found.
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId))
+                .thenReturn(Optional.empty()); // Simulate that no *active* override is found
+
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+
+        // Act
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Assert
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("80.00");
+        assertThat(result.getPriceSource()).isEqualTo("DYNAMIC");
+        assertThat(result.getOverridePrice()).isNull();
+        assertThat(result.getDynamicPrice()).isEqualByComparingTo("80.00");
+    }
+
+    @Test
+    void getPriceDetail_futureDatedOverride_fallsBackToDynamicPrice() {
+        // Arrange: item with base $100, dynamic $80. Future override $70.
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(new BigDecimal("80.00"));
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        // priceOverrideRepository.findCurrentActiveOverrideForItem will return Optional.empty()
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId))
+                .thenReturn(Optional.empty()); // Simulate no *currently active* override
+
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+
+        // Act
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        // Assert
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("80.00");
+        assertThat(result.getPriceSource()).isEqualTo("DYNAMIC");
+        assertThat(result.getOverridePrice()).isNull();
+    }
+
+    @Test
+    void getPriceDetail_expiredOverride_noDynamicPrice_fallsBackToBasePrice() {
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(null); // No dynamic price
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId))
+                .thenReturn(Optional.empty()); // Simulate no active override (e.g., it's expired)
+
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getPriceSource()).isEqualTo("BASE");
+        assertThat(result.getOverridePrice()).isNull();
+        assertThat(result.getDynamicPrice()).isNull();
+    }
+
+
+    // Test for "No Override, No Dynamic" is effectively covered by:
+    // getPriceDetail_noRulesOrDynamicAdjustments_returnsBasePriceAsFinal()
+    // and getPriceDetail_noDynamicPrice_usesCatalogBasePrice()
+    // We can add one more explicit one for clarity if desired.
+    @Test
+    void getPriceDetail_noOverride_noDynamic_fallsBackToBasePrice() {
+        item.setBasePrice(new BigDecimal("100.00"));
+        item.setDynamicPrice(null);
+        when(catalogItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+        when(priceOverrideRepository.findCurrentActiveOverrideForItem(itemId)).thenReturn(Optional.empty());
+        when(bulkPricingRuleRepository.findActiveApplicableRules(any(), anyInt(), any())).thenReturn(Collections.emptyList());
+
+        PriceDetailDto result = pricingService.getPriceDetail(itemId, 1);
+
+        assertThat(result.getFinalUnitPrice()).isEqualByComparingTo("100.00");
+        assertThat(result.getPriceSource()).isEqualTo("BASE");
     }
 }

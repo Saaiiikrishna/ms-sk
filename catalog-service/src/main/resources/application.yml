@@ -100,6 +100,8 @@ app:
       catalog-events-for-indexing: catalog.events.for.indexing # Could be a single topic or multiple
       # Topic for consuming price updates from pricing-engine
       price-updated-from-engine: catalog.price.updated
+      # DLT for the price update listener
+      price-update-listener-dlt: catalog.price-update.dlt
   outbox:
     poll:
       fixed-delay-ms: 10000 # Poll every 10 seconds
@@ -143,3 +145,9 @@ logging:
     org.testcontainers: INFO
     com.github.dockerjava: WARN # Reduce noise from Testcontainers docker interactions
     org.apache.kafka: WARN # Reduce noise from Kafka test utilities
+
+app: # Adding topics under app.kafka.topic for test profile too for consistency
+  kafka:
+    topic:
+      price-updated-from-engine: catalog.price.updated.test # Example for test
+      price-update-listener-dlt: catalog.price-update.dlt.test # DLT for test

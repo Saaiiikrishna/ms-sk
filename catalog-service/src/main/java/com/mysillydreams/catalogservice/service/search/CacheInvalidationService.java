@@ -20,24 +20,54 @@ public class CacheInvalidationService {
     // Using StringRedisTemplate for generic key operations if values are not always CartDto
     // Or inject specific templates if types are known.
     // For CartDto, we have cartDtoRedisTemplate. For others, a generic one.
-    private final RedisTemplate<String, Object> genericRedisTemplate; // For item-specific caches if any
-    private final RedisTemplate<String, CartDto> cartDtoRedisTemplate; // Specifically for CartDto
+    // Assuming genericRedisTemplate is configured with StringRedisSerializer for keys, like RedisCacheManager.
+    private final RedisTemplate<String, Object> genericRedisTemplate;
+    // private final RedisTemplate<String, CartDto> cartDtoRedisTemplate; // Keep if used elsewhere for specific CartDto ops
 
-    // --- Item Event Listeners ---
+    // --- Methods called by DynamicPriceUpdateListener ---
+
+    public void evictCatalogItemCache(UUID itemId) {
+        if (itemId == null) return;
+        String key = CacheKeyConstants.CATALOG_ITEM_CACHE_NAME + "::" + itemId.toString();
+        log.info("CacheInvalidator: Evicting catalogItem cache for key: {}", key);
+        genericRedisTemplate.delete(key);
+    }
+
+    public void evictPriceDetailCache(UUID itemId) {
+        if (itemId == null) return;
+        // Uses the pattern defined in CacheKeyConstants that matches Spring's default key generation.
+        String pricePattern = CacheKeyConstants.getPriceDetailCachePatternByItem(itemId);
+        log.info("CacheInvalidator: Evicting priceDetail caches with pattern: {}", pricePattern);
+        Set<String> keys = genericRedisTemplate.keys(pricePattern);
+        if (keys != null && !keys.isEmpty()) {
+            log.info("CacheInvalidator: Found {} priceDetail keys to evict for pattern {}", keys.size(), pricePattern);
+            genericRedisTemplate.delete(keys);
+        } else {
+            log.info("CacheInvalidator: No priceDetail keys found for pattern: {}", pricePattern);
+        }
+    }
+
+
+    // --- Kafka Event Listeners (Secondary Invalidation Mechanism / Broader Scopes) ---
+    // These can be kept if they serve purposes beyond what DynamicPriceUpdateListener handles directly,
+    // e.g., if other services might update items/prices without going through the primary listener's flow,
+    // or for broader invalidations like "all items in category X".
+    // For now, the direct calls from DynamicPriceUpdateListener are primary for its changes.
+    // The existing Kafka listeners in this service might become redundant for price/item updates
+    // if DynamicPriceUpdateListener is the sole path for such changes that require cache eviction.
+    // Let's assume they might still be useful for other scenarios or as a fallback.
 
     @KafkaListener(
             topics = "${app.kafka.topic.item-updated}",
             groupId = "catalog-cache-invalidator-item-updated",
-            containerFactory = "kafkaListenerContainerFactory" // Default factory for CatalogItemEvent
+            containerFactory = "kafkaListenerContainerFactory"
     )
     public void onItemUpdated(@Payload CatalogItemEvent event) {
-        log.info("CacheInvalidator: Received item.updated event for item ID: {}", event.getItemId());
-        evictItemSpecificCaches(event.getItemId().toString());
-
-        // Complex: Invalidate carts containing this item.
-        // This requires an auxiliary index (itemId -> Set<userId>) or iterating all cart keys (not scalable).
-        // For now, relying on CartDto TTL or next cart mutation by user to refresh.
-        log.warn("TODO: Implement targeted CartDto cache invalidation for item ID {} update, if required beyond TTL.", event.getItemId());
+        log.info("CacheInvalidator (Kafka): Received item.updated event for item ID: {}", event.getItemId());
+        evictCatalogItemCache(event.getItemId()); // Evict general item cache
+        evictPriceDetailCache(event.getItemId()); // Prices might have changed too
+        // Consider cart invalidation if item details shown in cart change significantly
+        log.warn("TODO (Kafka Invalidator): Implement targeted CartDto cache invalidation for item ID {} update, if required beyond TTL.", event.getItemId());
     }
 
     @KafkaListener(
@@ -46,87 +76,54 @@ public class CacheInvalidationService {
             containerFactory = "kafkaListenerContainerFactory"
     )
     public void onItemDeleted(@Payload CatalogItemEvent event) {
-        log.info("CacheInvalidator: Received item.deleted event for item ID: {}", event.getItemId());
-        evictItemSpecificCaches(event.getItemId().toString());
-        // Similar TODO for cart invalidation as onItemUpdated.
-        log.warn("TODO: Implement targeted CartDto cache invalidation for item ID {} deletion, if required beyond TTL.", event.getItemId());
+        log.info("CacheInvalidator (Kafka): Received item.deleted event for item ID: {}", event.getItemId());
+        evictCatalogItemCache(event.getItemId());
+        evictPriceDetailCache(event.getItemId());
+        log.warn("TODO (Kafka Invalidator): Implement targeted CartDto cache invalidation for item ID {} deletion, if required beyond TTL.", event.getItemId());
     }
 
-    // --- Price Event Listeners ---
-
     @KafkaListener(
-            topics = "${app.kafka.topic.price-updated}",
+            topics = "${app.kafka.topic.price-updated}", // This is likely the event from ItemService base price changes
             groupId = "catalog-cache-invalidator-price-updated",
-            // Assuming PriceUpdatedEvent needs its own factory or a generic one
-            // For now, let's create a new factory for it in KafkaConsumerConfig if this doesn't work.
-            // Let's assume a factory named 'priceUpdatedEventKafkaListenerContainerFactory' will be created.
-            containerFactory = "priceUpdatedEventKafkaListenerContainerFactory"
+            containerFactory = "priceUpdatedEventKafkaListenerContainerFactory" // Ensure this factory exists and is correctly typed
     )
-    public void onPriceUpdated(@Payload PriceUpdatedEvent event) {
-        log.info("CacheInvalidator: Received price.updated event for item ID: {}", event.getItemId());
-        evictItemPriceCaches(event.getItemId().toString());
-        log.warn("TODO: Implement targeted CartDto cache invalidation for item ID {} price update, if required beyond TTL.", event.getItemId());
+    public void onBasePriceUpdatedFromItemService(@Payload PriceUpdatedEvent event) { // Assuming this is com.mysillydreams.catalogservice.kafka.event.PriceUpdatedEvent
+        log.info("CacheInvalidator (Kafka): Received base price.updated event for item ID: {}", event.getItemId());
+        // This event might be for base price changes. DynamicPriceUpdateListener handles dynamic price changes.
+        // Evicting priceDetail is crucial as it depends on basePrice if no dynamic price is set.
+        evictPriceDetailCache(event.getItemId());
+        // CatalogItemDto also contains basePrice, so evict it too.
+        evictCatalogItemCache(event.getItemId());
+        log.warn("TODO (Kafka Invalidator): Implement targeted CartDto cache invalidation for item ID {} base price update, if required beyond TTL.", event.getItemId());
     }
 
-    // --- Bulk Pricing Rule Event Listeners ---
+
     @KafkaListener(
-            topics = "${app.kafka.topic.bulk-rule-added}", // Assuming this topic name is correct from application.yml
+            topics = "${app.kafka.topic.bulk-rule-added}", // Or a more generic topic like "bulk-rule-changed"
             groupId = "catalog-cache-invalidator-bulk-rule",
-            // Assuming BulkPricingRuleEvent needs its own factory or a generic one
             containerFactory = "bulkPricingRuleEventKafkaListenerContainerFactory"
     )
-    public void onBulkPricingRuleChanged(@Payload BulkPricingRuleEvent event) { // Catches added, updated, deleted
-        log.info("CacheInvalidator: Received {} event for item ID: {}", event.getEventType(), event.getItemId());
-        evictItemPriceCaches(event.getItemId().toString());
-        log.warn("TODO: Implement targeted CartDto cache invalidation for item ID {} bulk rule change, if required beyond TTL.", event.getItemId());
+    public void onBulkPricingRuleChanged(@Payload BulkPricingRuleEvent event) {
+        log.info("CacheInvalidator (Kafka): Received {} event for item ID: {}", event.getEventType(), event.getItemId());
+        // Bulk rule changes affect price calculations.
+        evictPriceDetailCache(event.getItemId()); // Evict all price details for the item.
+        log.warn("TODO (Kafka Invalidator): Implement targeted CartDto cache invalidation for item ID {} bulk rule change, if required beyond TTL.", event.getItemId());
     }
 
-    // --- Stock Event Listener ---
     @KafkaListener(
             topics = "${app.kafka.topic.stock-changed}",
             groupId = "catalog-cache-invalidator-stock-changed",
             containerFactory = "stockLevelChangedEventKafkaListenerContainerFactory"
     )
     public void onStockLevelChanged(@Payload StockLevelChangedEvent event) {
-        log.info("CacheInvalidator: Received stock.level.changed event for item ID: {}", event.getItemId());
-        evictItemStockCache(event.getItemId().toString());
-        // If cart display or add-to-cart logic depends directly on real-time stock (beyond reservation checks),
-        // then carts containing this item might need invalidation.
-        // Current CartDto does not include stock directly, but availability checks happen.
-        log.warn("TODO: Consider CartDto cache invalidation for item ID {} stock change if cart display is affected beyond availability checks.", event.getItemId());
+        log.info("CacheInvalidator (Kafka): Received stock.level.changed event for item ID: {}", event.getItemId());
+        // If CatalogItemDto includes stock level, evict it.
+        // evictCatalogItemCache(event.getItemId()); // If CatalogItemDto.quantityOnHand is part of it and cached
+        log.info("CacheInvalidator (Kafka): Stock level changed for item {}. CatalogItemDto cache might need eviction if it includes stock.", event.getItemId());
+        // PriceDetailDto typically doesn't include stock, so no eviction needed for it based on stock change unless pricing rules depend on stock.
+        log.warn("TODO (Kafka Invalidator): Consider CartDto cache invalidation for item ID {} stock change if cart display is affected beyond availability checks.", event.getItemId());
     }
 
-
-    // --- Helper methods for eviction ---
-
-    private void evictItemSpecificCaches(String itemId) {
-        evictItemStockCache(itemId);
-        evictItemPriceCaches(itemId);
-    }
-
-    private void evictItemStockCache(String itemId) {
-        String stockKey = CacheKeyConstants.getItemStockLevelKey(itemId);
-        // genericRedisTemplate.delete(stockKey); // If this cache existed
-        log.info("CacheInvalidator: (Simulated) Evicted item stock cache for key: {}", stockKey);
-    }
-
-    private void evictItemPriceCaches(String itemId) {
-        // If price details are cached per quantity, need to evict by pattern
-        String pricePattern = CacheKeyConstants.getItemPriceDetailPattern(itemId);
-        Set<String> keys = genericRedisTemplate.keys(pricePattern);
-        if (keys != null && !keys.isEmpty()) {
-            // genericRedisTemplate.delete(keys);
-            log.info("CacheInvalidator: (Simulated) Evicted item price detail caches for pattern: {} ({} keys)", pricePattern, keys.size());
-        } else {
-            log.info("CacheInvalidator: (Simulated) No item price detail caches found for pattern: {}", pricePattern);
-        }
-        // Also if there's a general item base price/info cache
-        // genericRedisTemplate.delete("itemCache:base::" + itemId);
-    }
-
-    // Note: Direct CartDto invalidation based on item events is complex.
-    // The current strategy relies on CartService mutations updating the cache for THAT user,
-    // and CartDto TTL for eventual consistency for other users' cached carts if an underlying item changes globally.
-    // If more aggressive cart invalidation is needed, an auxiliary index (item_id -> set_of_user_ids_with_item_in_cart)
-    // would be required, which is a larger change.
+    // Removed old helper methods like evictItemSpecificCaches, evictItemStockCache, evictItemPriceCaches
+    // as they were using different key structures and are replaced by the new specific methods.
 }

@@ -181,6 +181,11 @@ public class CatalogItemIndexerService {
         // CategoryEntity parameter is the potentially updated one from a category event
         CategoryEntity categoryToUse = categoryEntity != null ? categoryEntity : itemEntity.getCategory();
 
+        Double dynamicPriceDouble = null;
+        if (itemEntity.getDynamicPrice() != null) {
+            dynamicPriceDouble = itemEntity.getDynamicPrice().doubleValue();
+        }
+
         return CatalogItemSearchDocument.builder()
             .id(itemEntity.getId().toString())
             .sku(itemEntity.getSku())
@@ -188,15 +193,59 @@ public class CatalogItemIndexerService {
             .description(itemEntity.getDescription())
             .itemType(itemEntity.getItemType())
             .basePrice(itemEntity.getBasePrice() != null ? itemEntity.getBasePrice().doubleValue() : null)
+            .dynamicPrice(dynamicPriceDouble) // Populate dynamicPrice
             .active(itemEntity.isActive())
             .createdAt(itemEntity.getCreatedAt())
             .updatedAt(itemEntity.getUpdatedAt())
+            .dynamicPriceLastAppliedTimestamp(itemEntity.getDynamicPriceLastAppliedTimestamp()) // Populate dynamicPriceLastAppliedTimestamp
             .categoryId(categoryToUse.getId().toString())
             .categoryName(categoryToUse.getName())
             .categoryPathKeyword(categoryToUse.getPath())
             .categoryPathHierarchy(categoryToUse.getPath())
             .metadata_flattened(ensureMapForFlattened(itemEntity.getMetadata()))
             .build();
+    }
+
+    /**
+     * Fetches an item by its ID and re-indexes it.
+     * This is intended to be called after an item is updated, especially its dynamic price.
+     * @param itemId The UUID of the item to re-index.
+     */
+    @Transactional(readOnly = true) // Ensures consistent read of item and its category
+    public void reindexItem(UUID itemId) {
+        log.info("Attempting to re-index item with ID: {}", itemId);
+        CatalogItemEntity itemEntity = itemRepository.findById(itemId).orElse(null);
+
+        if (itemEntity == null) {
+            log.warn("Item with ID {} not found. Cannot re-index.", itemId);
+            // Optionally, attempt to delete from index if it might exist there stale.
+            // deleteItemFromIndex(itemId.toString());
+            return;
+        }
+
+        // Category should always be present if itemEntity is valid due to non-null constraint,
+        // but fetch it explicitly if there's any doubt or if itemEntity.getCategory() could be stale
+        // depending on transaction boundaries. Here, itemEntity.getCategory() should be fine.
+        CategoryEntity categoryEntity = itemEntity.getCategory();
+        if (categoryEntity == null) {
+            // This should ideally not happen due to DB constraints.
+            log.error("Category not found for item ID {}. Indexing without full category details.", itemId);
+            // Create a placeholder or use default/unknown category details
+            categoryEntity = CategoryEntity.builder().id(itemEntity.getCategory().getId()).name("Unknown").path("/unknown/").build();
+        }
+
+        CatalogItemSearchDocument doc = convertToSearchDocument(itemEntity, categoryEntity);
+        try {
+            IndexRequest<CatalogItemSearchDocument> request = new IndexRequest.Builder<CatalogItemSearchDocument>()
+                    .index(OpenSearchConfig.CATALOG_ITEMS_INDEX_NAME)
+                    .id(doc.getId())
+                    .document(doc)
+                    .build();
+            openSearchClient.index(request);
+            log.info("Successfully re-indexed item ID: {}", doc.getId());
+        } catch (IOException e) {
+            log.error("Error re-indexing item ID {}: {}", doc.getId(), e.getMessage(), e);
+        }
     }
 
 

@@ -39,10 +39,9 @@ public class PricingService {
 
     private final BulkPricingRuleRepository bulkPricingRuleRepository;
     private final CatalogItemRepository catalogItemRepository;
-    // private final PriceOverrideRepository priceOverrideRepository; // TODO: Inject when implemented
+    private final com.mysillydreams.catalogservice.domain.repository.PriceOverrideRepository priceOverrideRepository; // Injected
     private final DynamicPricingEngine dynamicPricingEngine;
-    // private final KafkaProducerService kafkaProducerService; // Replaced
-    private final OutboxEventService outboxEventService; // Added
+    private final OutboxEventService outboxEventService;
 
 
     @Value("${app.kafka.topic.bulk-rule-added}") // This might need to be a more generic topic if eventType field is used, or keep specific.
@@ -138,8 +137,13 @@ public class PricingService {
 
 
     @Transactional(readOnly = true)
+    // CacheKeyConstants.PRICE_DETAIL_CACHE_NAME = "priceDetail"
+    // Using CacheKeyConstants helper method via SpEL:
+    @org.springframework.cache.annotation.Cacheable(
+            cacheNames = com.mysillydreams.catalogservice.config.CacheKeyConstants.PRICE_DETAIL_CACHE_NAME,
+            key = "T(com.mysillydreams.catalogservice.config.CacheKeyConstants).getPriceDetailCacheKey(#itemId, #quantity)")
     public PriceDetailDto getPriceDetail(UUID itemId, int quantity) {
-        log.debug("Calculating price detail for item ID: {} and quantity: {}", itemId, quantity);
+        log.info("Calculating price detail from DB/rules for item ID: {} and quantity: {}", itemId, quantity); // Log DB/rules hit
         if (quantity <= 0) {
             throw new InvalidRequestException("Quantity must be positive.");
         }
@@ -153,35 +157,41 @@ public class PricingService {
         }
 
         List<PricingComponent> finalComponents = new ArrayList<>();
-        BigDecimal effectiveBasePrice = item.getBasePrice(); // Start with catalog base price
-        String basePriceSource = "CATALOG_BASE_PRICE";
+        BigDecimal effectiveBasePrice;
+        String priceSource;
+        BigDecimal actualOverridePrice = null; // To store the override price if used
 
-        // TODO: 1. Check for active manual overrides (highest precedence)
-        // PriceOverrideEntity activeManualOverride = priceOverrideRepository.findActiveOverrideForItemAtTime(itemId, Instant.now());
-        // if (activeManualOverride != null) {
-        //     effectiveBasePrice = activeManualOverride.getOverridePrice();
-        //     basePriceSource = "MANUAL_OVERRIDE";
-        //     finalComponents.add(PricingComponent.builder()
-        //         .code(basePriceSource)
-        //         .description("Manual Override Applied")
-        //         .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
-        //         .build());
-        // } else
-        if (item.getDynamicPrice() != null) {
+        // 1. Check for active manual overrides (highest precedence)
+        Optional<com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity> activeManualOverrideOpt =
+                priceOverrideRepository.findCurrentActiveOverrideForItem(itemId);
+
+        if (activeManualOverrideOpt.isPresent()) {
+            com.mysillydreams.catalogservice.domain.model.PriceOverrideEntity activeManualOverride = activeManualOverrideOpt.get();
+            effectiveBasePrice = activeManualOverride.getOverridePrice();
+            priceSource = "OVERRIDE";
+            actualOverridePrice = effectiveBasePrice; // Store for DTO
+            finalComponents.add(PricingComponent.builder()
+                .code(priceSource)
+                .description("Manual Override Applied")
+                .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
+                .build());
+            log.debug("Using manual override price {} for item {}", effectiveBasePrice, itemId);
+        } else if (item.getDynamicPrice() != null) {
             // 2. Check for dynamic price from pricing engine
             effectiveBasePrice = item.getDynamicPrice();
-            basePriceSource = "DYNAMIC_PRICE_FROM_ENGINE";
-            // For now, add a single component. Ideally, use components from PriceUpdatedEvent if stored.
+            priceSource = "DYNAMIC";
             finalComponents.add(PricingComponent.builder()
-                .code(basePriceSource)
+                .code(priceSource)
                 .description("Dynamic Price Applied from Pricing Engine")
                 .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
                 .build());
             log.debug("Using dynamic price {} for item {}", effectiveBasePrice, itemId);
         } else {
             // 3. Fallback to catalog base price
+            effectiveBasePrice = item.getBasePrice();
+            priceSource = "BASE";
             finalComponents.add(PricingComponent.builder()
-                .code(basePriceSource) // Will be "CATALOG_BASE_PRICE"
+                .code(priceSource)
                 .description("Catalog Base Price")
                 .amount(effectiveBasePrice.setScale(2, RoundingMode.HALF_UP))
                 .build());
@@ -238,8 +248,9 @@ public class PricingService {
                 .itemId(itemId)
                 .quantity(quantity)
                 .basePrice(item.getBasePrice().setScale(2, RoundingMode.HALF_UP)) // Original catalog base price
-                // .overridePrice(activeManualOverride != null ? activeManualOverride.getOverridePrice().setScale(2, RoundingMode.HALF_UP) : null) // If activeManualOverride was used
-                .dynamicPrice(item.getDynamicPrice() != null && basePriceSource.equals("DYNAMIC_PRICE_FROM_ENGINE") ? item.getDynamicPrice().setScale(2, RoundingMode.HALF_UP) : null) // Show dynamic if used
+                .overridePrice(actualOverridePrice != null ? actualOverridePrice.setScale(2, RoundingMode.HALF_UP) : null)
+                .dynamicPrice(priceSource.equals("DYNAMIC") ? effectiveBasePrice.setScale(2, RoundingMode.HALF_UP) : (item.getDynamicPrice() != null ? item.getDynamicPrice().setScale(2, RoundingMode.HALF_UP) : null) ) // show original dynamic if override took place
+                .priceSource(priceSource)
                 .components(finalComponents)
                 .finalUnitPrice(finalUnitPrice)
                 .totalPrice(totalPrice)

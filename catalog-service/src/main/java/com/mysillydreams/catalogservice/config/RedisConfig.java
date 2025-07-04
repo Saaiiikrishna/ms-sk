@@ -60,14 +60,46 @@ public class RedisConfig {
                 .disableCachingNullValues(); // Important if methods can return null and you don't want to cache that
 
         return RedisCacheManager.builder(connectionFactory)
-                .cacheDefaults(cacheConfiguration)
+                .cacheDefaults(cacheConfiguration) // Default TTL is 30 mins
                 .withInitialCacheConfigurations(Map.of(
-                    CART_CACHE_NAME,
+                    CacheKeyConstants.ACTIVE_CART_CACHE_NAME, // Use constant
                     RedisCacheConfiguration.defaultCacheConfig()
                         .entryTtl(Duration.ofHours(1)) // Specific TTL for cart cache
+                        .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonRedisSerializer))
+                        .disableCachingNullValues(),
+                    CacheKeyConstants.CATALOG_ITEM_CACHE_NAME, // New cache for CatalogItemDto
+                    RedisCacheConfiguration.defaultCacheConfig()
+                        .entryTtl(Duration.ofMinutes(10)) // TTL for catalogItem
+                        .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonRedisSerializer))
+                        .disableCachingNullValues(),
+                    CacheKeyConstants.PRICE_DETAIL_CACHE_NAME, // New cache for PriceDetailDto
+                    RedisCacheConfiguration.defaultCacheConfig()
+                        .entryTtl(Duration.ofMinutes(5))  // TTL for priceDetail
                         .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonRedisSerializer))
                         .disableCachingNullValues()
                 ))
                 .build();
+    }
+
+    @Bean("genericRedisTemplate") // Name it to be specific if other Object-valued templates exist
+    public RedisTemplate<String, Object> genericRedisTemplate(RedisConnectionFactory connectionFactory) {
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        template.setConnectionFactory(connectionFactory);
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        // Enable default typing if you store diverse object types and need polymorphism during deserialization.
+        // Be cautious with default typing due to security implications if the data source is untrusted.
+        // objectMapper.activateDefaultTyping(objectMapper.getPolymorphicTypeValidator(), ObjectMapper.DefaultTyping.NON_FINAL, JsonTypeInfo.As.PROPERTY);
+
+
+        GenericJackson2JsonRedisSerializer jsonRedisSerializer = new GenericJackson2JsonRedisSerializer(objectMapper);
+
+        template.setKeySerializer(new StringRedisSerializer()); // Crucial for CacheManager interop
+        template.setValueSerializer(jsonRedisSerializer); // For values, if they are JSON
+        template.setHashKeySerializer(new StringRedisSerializer());
+        template.setHashValueSerializer(jsonRedisSerializer);
+        template.afterPropertiesSet();
+        return template;
     }
 }
