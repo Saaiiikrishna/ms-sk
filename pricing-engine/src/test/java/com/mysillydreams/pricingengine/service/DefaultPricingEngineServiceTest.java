@@ -110,22 +110,22 @@ class DefaultPricingEngineServiceTest {
 
 
     private EnrichedAggregatedMetric buildEnrichedData(AggregatedMetric aggMetric,
-                                                       DynamicPricingRuleDto ruleDto,
+                                                       List<DynamicPricingRuleDto> ruleDtos, // Changed to List
                                                        PriceOverrideDto overrideDto,
                                                        ItemBasePriceEvent basePriceEvent) {
         return EnrichedAggregatedMetric.builder()
                 .aggregatedMetric(aggMetric)
-                .ruleDto(ruleDto)
+                .ruleDtos(ruleDtos) // Changed to List
                 .overrideDto(overrideDto)
                 .basePriceEvent(basePriceEvent)
                 .build();
     }
 
     @Test
-    void calculatePrice_noRulesNoOverrides_noLastPrice_returnsBasePriceEvent() { // Renamed, verify return
+    void calculatePrice_noRulesNoOverrides_noLastPrice_returnsBasePriceEvent() {
         AggregatedMetric metrics = createSampleAggregatedMetric(testItemId, 50L);
         ItemBasePriceEvent basePriceEvent = ItemBasePriceEvent.builder().itemId(testItemId).basePrice(basePrice).build();
-        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, null, null, basePriceEvent);
+        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, Collections.emptyList(), null, basePriceEvent); // Pass empty list
 
         Optional<PriceUpdatedEvent> resultOpt = pricingEngineService.calculatePrice(enrichedData, Optional.empty());
 
@@ -136,18 +136,18 @@ class DefaultPricingEngineServiceTest {
         assertThat(resultEvent.getFinalPrice()).isEqualByComparingTo(basePrice);
         assertThat(resultEvent.getComponents()).hasSize(1);
         assertThat(resultEvent.getComponents().get(0).getComponentName()).isEqualTo("BASE_PRICE");
-        verify(priceUpdatedEventKafkaTemplate, never()).send(anyString(),anyString(),any()); // Service no longer sends
+        verify(priceUpdatedEventKafkaTemplate, never()).send(anyString(),anyString(),any());
     }
 
     @Test
-    void calculatePrice_withActiveOverride_returnsOverridePriceEvent() { // Renamed
+    void calculatePrice_withActiveOverride_returnsOverridePriceEvent() {
         PriceOverrideDto activeOverrideDto = PriceOverrideDto.builder()
                 .id(UUID.randomUUID()).itemId(testItemId).overridePrice(BigDecimal.valueOf(80.00))
                 .enabled(true).startTime(Instant.now().minusSeconds(60)).endTime(Instant.now().plusSeconds(60))
                 .build();
         AggregatedMetric metrics = createSampleAggregatedMetric(testItemId, 50L);
         ItemBasePriceEvent basePriceEvent = ItemBasePriceEvent.builder().itemId(testItemId).basePrice(basePrice).build();
-        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, null, activeOverrideDto, basePriceEvent);
+        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, Collections.emptyList(), activeOverrideDto, basePriceEvent); // Pass empty list for rules
 
         Optional<PriceUpdatedEvent> resultOpt = pricingEngineService.calculatePrice(enrichedData, Optional.empty());
 
@@ -159,7 +159,7 @@ class DefaultPricingEngineServiceTest {
     }
 
     @Test
-    void calculatePrice_withApplicableRule_returnsAdjustedPriceEvent() { // Renamed
+    void calculatePrice_withApplicableRule_returnsAdjustedPriceEvent() {
         Map<String, Object> params = new HashMap<>();
         params.put("threshold", 50L);
         params.put("adjustmentPercentage", 0.10);
@@ -169,7 +169,7 @@ class DefaultPricingEngineServiceTest {
                 .build();
         AggregatedMetric metrics = createSampleAggregatedMetric(testItemId, 100L);
         ItemBasePriceEvent basePriceEvent = ItemBasePriceEvent.builder().itemId(testItemId).basePrice(basePrice).build();
-        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, ruleDto, null, basePriceEvent);
+        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, List.of(ruleDto), null, basePriceEvent); // Pass list with one rule
 
         Optional<PriceUpdatedEvent> resultOpt = pricingEngineService.calculatePrice(enrichedData, Optional.empty());
 
@@ -181,7 +181,7 @@ class DefaultPricingEngineServiceTest {
     }
 
     @Test
-    void calculatePrice_withFlatAmountOffRule_returnsAdjustedPriceEvent() { // Renamed
+    void calculatePrice_withFlatAmountOffRule_returnsAdjustedPriceEvent() {
         Map<String, Object> params = new HashMap<>();
         params.put("amountOff", "20.00");
         DynamicPricingRuleDto ruleDto = DynamicPricingRuleDto.builder()
@@ -190,7 +190,7 @@ class DefaultPricingEngineServiceTest {
                 .build();
         AggregatedMetric metrics = createSampleAggregatedMetric(testItemId, 10L);
         ItemBasePriceEvent basePriceEvent = ItemBasePriceEvent.builder().itemId(testItemId).basePrice(basePrice).build();
-        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, ruleDto, null, basePriceEvent);
+        EnrichedAggregatedMetric enrichedData = buildEnrichedData(metrics, List.of(ruleDto), null, basePriceEvent); // Pass list with one rule
 
         Optional<PriceUpdatedEvent> resultOpt = pricingEngineService.calculatePrice(enrichedData, Optional.empty());
 
@@ -203,7 +203,7 @@ class DefaultPricingEngineServiceTest {
     }
 
     @Test
-    void calculatePrice_priceChangeBelowThreshold_returnsEmptyOptional() { // Renamed
+    void calculatePrice_priceChangeBelowThreshold_returnsEmptyOptional() {
         BigDecimal lastPublishedPrice = new BigDecimal("100.00");
         Map<String, Object> params = new HashMap<>();
         params.put("threshold", 1L);

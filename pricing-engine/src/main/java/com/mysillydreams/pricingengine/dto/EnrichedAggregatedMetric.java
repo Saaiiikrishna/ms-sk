@@ -6,29 +6,29 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
-import java.util.Optional; // Using Optional for joined DTOs
+import java.util.List; // Added for list of rules
+import java.util.Optional;
 
-// This DTO will hold the aggregated metric and the joined rule, override, and base price information.
+// This DTO will hold the aggregated metric and the joined rule(s), override, and base price information.
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class EnrichedAggregatedMetric {
     private AggregatedMetric aggregatedMetric;
-    private DynamicPricingRuleDto ruleDto; // Will be null if no matching rule
-    private PriceOverrideDto overrideDto; // Will be null if no matching override
-    private ItemBasePriceEvent basePriceEvent; // Will be null if no matching base price info
+    private List<DynamicPricingRuleDto> ruleDtos; // Changed to List
+    private PriceOverrideDto overrideDto;
+    private ItemBasePriceEvent basePriceEvent;
 
-    // Convenience method to extract base price, providing a default or handling null
     public Optional<BigDecimal> getBasePrice() {
         return Optional.ofNullable(basePriceEvent).map(ItemBasePriceEvent::getBasePrice);
     }
 
     // Fluent "with" methods for builder-like construction in streams, returning a new instance
-    public EnrichedAggregatedMetric withRule(DynamicPricingRuleDto ruleDto) {
+    public EnrichedAggregatedMetric withRules(List<DynamicPricingRuleDto> ruleDtos) { // Renamed and takes List
         return EnrichedAggregatedMetric.builder()
                 .aggregatedMetric(this.aggregatedMetric)
-                .ruleDto(ruleDto)
+                .ruleDtos(ruleDtos) // Changed to List
                 .overrideDto(this.overrideDto)
                 .basePriceEvent(this.basePriceEvent)
                 .build();

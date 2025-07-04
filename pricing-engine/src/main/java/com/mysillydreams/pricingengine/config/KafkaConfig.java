@@ -21,12 +21,14 @@ import com.mysillydreams.pricingengine.dto.DynamicPricingRuleDto;
 import com.mysillydreams.pricingengine.dto.PriceOverrideDto;
 import com.mysillydreams.pricingengine.dto.MetricEvent;
 import com.mysillydreams.pricingengine.dto.ItemBasePriceEvent;
-import com.mysillydreams.pricingengine.dto.PriceUpdatedEvent; // Added
+import com.mysillydreams.pricingengine.dto.PriceUpdatedEvent;
 import org.apache.kafka.common.serialization.Serde;
-
+import org.springframework.kafka.support.serializer.JsonDeserializer; // Already present but good to note for ListOfRuleSerde context
 
 import java.util.HashMap;
+import java.util.List; // For ListOfRuleSerde
 import java.util.Map;
+import java.util.UUID; // For uuidSerde if used explicitly
 
 /**
  * Kafka specific configurations for both Listeners and Streams.
@@ -147,5 +149,11 @@ public class KafkaConfig {
     @Bean
     public Serde<UUID> uuidSerde() {
         return Serdes.UUID();
+    }
+
+    @Bean
+    public Serde<List<DynamicPricingRuleDto>> listOfRuleDtoSerde(ObjectMapper objectMapper) {
+        // For a List, we need to use TypeReference with JsonSerde
+        return new JsonSerde<>(new com.fasterxml.jackson.core.type.TypeReference<List<DynamicPricingRuleDto>>() {}, objectMapper);
     }
 }

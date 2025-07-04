@@ -5,9 +5,12 @@ import com.mysillydreams.pricingengine.dto.DynamicPricingRuleDto;
 import com.mysillydreams.pricingengine.dto.ItemBasePriceEvent;
 import com.mysillydreams.pricingengine.dto.MetricEvent;
 import com.mysillydreams.pricingengine.dto.PriceOverrideDto;
+import com.mysillydreams.pricingengine.dto.PriceUpdatedEvent; // Added for output topic
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.*;
+import java.util.List; // Added
+import java.math.BigDecimal; // Added
 import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.test.TestRecord;
 import org.junit.jupiter.api.AfterEach;
@@ -29,20 +32,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DemandMetricsAggregatorStreamTest {
 
     private TopologyTestDriver testDriver;
-    private TestInputTopic<String, MetricEvent> inputTopic;
-    // The KTable output is internal to the stream's logic in the current implementation,
-    // and it logs via .foreach. For testing the aggregation result directly,
-    // we would typically sink the KTable's toStream() output to another topic.
-    // Or, if the .foreach calls a mockable service, we could verify that.
-    // For this test, we'll focus on building the topology and ensuring it runs.
-    // A more thorough test would require an output topic for the aggregated counts.
+    // private TestInputTopic<String, MetricEvent> inputTopic; // Replaced by demandMetricsInputTopic
+    private TestOutputTopic<String, MetricEvent> demandMetricsDltOutputTopic;
+    private TestOutputTopic<String, PriceUpdatedEvent> priceUpdatedOutputTopic; // For final price updates
+    private TestOutputTopic<String, PriceUpdatedEvent> internalLastPriceOutputTopic; // For internal state updates
 
     private final String DEMAND_METRICS_TOPIC = "demand.metrics.test";
     private final String DEMAND_METRICS_DLT_TOPIC = "demand.metrics.dlt.test";
-    // Internal topics for GKTs - names should match those used in DemandMetricsAggregatorStream constructor for @Value
-    private final String INTERNAL_RULES_TOPIC = "internal.rules.v1.test";
-    private final String INTERNAL_OVERRIDES_TOPIC = "internal.overrides.v1.test";
+    private final String INTERNAL_RULES_BY_ITEMID_TOPIC = "internal.rules-by-itemid.v1.test"; // Updated name
+    private final String INTERNAL_OVERRIDES_BY_ITEMID_TOPIC = "internal.overrides-by-itemid.v1.test"; // Updated name
     private final String INTERNAL_BASE_PRICES_TOPIC = "internal.item.baseprices.v1.test";
+    private final String INTERNAL_LAST_PUBLISHED_PRICES_TOPIC = "internal.last-published-prices.v1.test"; // Added
+    private final String EXTERNAL_PRICE_UPDATED_TOPIC = "catalog.price.updated.test"; // Added
 
 
     @Mock
@@ -58,48 +59,56 @@ class DemandMetricsAggregatorStreamTest {
     private JsonSerde<DynamicPricingRuleDto> ruleDtoSerde;
     private JsonSerde<PriceOverrideDto> overrideDtoSerde;
     private JsonSerde<ItemBasePriceEvent> basePriceEventSerde;
+    private JsonSerde<PriceUpdatedEvent> priceUpdatedEventSerde; // Added
+    private JsonSerde<List<DynamicPricingRuleDto>> listOfRuleDtoSerde; // Added
 
     private TestInputTopic<String, MetricEvent> demandMetricsInputTopic;
-    private TestOutputTopic<String, MetricEvent> demandMetricsDltOutputTopic;
-    // Input topics for populating GlobalKTables
-    private TestInputTopic<UUID, DynamicPricingRuleDto> internalRulesInputTopic;
-    private TestInputTopic<UUID, PriceOverrideDto> internalOverridesInputTopic;
+    // Input topics for populating GlobalKTables / KTables
+    private TestInputTopic<String, DynamicPricingRuleDto> internalRulesByItemIdInputTopic; // Changed from UUID key
+    private TestInputTopic<String, PriceOverrideDto> internalOverridesByItemIdInputTopic; // Changed from UUID key
     private TestInputTopic<String, ItemBasePriceEvent> internalBasePricesInputTopic;
+    private TestInputTopic<String, PriceUpdatedEvent> internalLastPublishedPricesInputTopic; // Added
 
 
     @BeforeEach
     void setUp() {
-        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules(); // For proper Instant/BigDecimal handling
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
         metricEventSerde = new JsonSerde<>(MetricEvent.class, objectMapper);
         ruleDtoSerde = new JsonSerde<>(DynamicPricingRuleDto.class, objectMapper);
         overrideDtoSerde = new JsonSerde<>(PriceOverrideDto.class, objectMapper);
         basePriceEventSerde = new JsonSerde<>(ItemBasePriceEvent.class, objectMapper);
+        priceUpdatedEventSerde = new JsonSerde<>(PriceUpdatedEvent.class, objectMapper); // Init
+        listOfRuleDtoSerde = new JsonSerde<>(new com.fasterxml.jackson.core.type.TypeReference<List<DynamicPricingRuleDto>>() {}, objectMapper); // Init
 
 
         Properties props = new Properties();
         props.put(StreamsConfig.APPLICATION_ID_CONFIG, "test-pricing-engine-streams");
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234");
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
-        // Default value serde can be JsonSerde, but specific Serdes are better for typed topics
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, JsonSerde.class.getName());
         props.put(JsonSerde.TRUSTED_PACKAGES, "com.mysillydreams.pricingengine.dto");
 
         demandMetricsAggregatorStream = new DemandMetricsAggregatorStream(
                 pricingEngineService,
-                dltKafkaTemplate, // Pass the mock
+                dltKafkaTemplate,
                 stringSerde,
-                uuidSerde, // Pass the Serde bean
+                // uuidSerde, // Removed as String keys are primarily used for joins now
                 metricEventSerde,
-                ruleDtoSerde, // Pass specific Serdes
+                ruleDtoSerde,
                 overrideDtoSerde,
-                basePriceEventSerde
+                basePriceEventSerde,
+                priceUpdatedEventSerde, // Pass the Serde
+                listOfRuleDtoSerde   // Pass the Serde
         );
-        // Manually set @Value fields for testing
+
+        // Manually set @Value fields for testing topic names
         ReflectionTestUtils.setField(demandMetricsAggregatorStream, "demandMetricsTopic", DEMAND_METRICS_TOPIC);
-        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalRulesTopic", INTERNAL_RULES_TOPIC);
-        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalOverridesTopic", INTERNAL_OVERRIDES_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalRulesByItemIdTopic", INTERNAL_RULES_BY_ITEMID_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalOverridesByItemIdTopic", INTERNAL_OVERRIDES_BY_ITEMID_TOPIC);
         ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalBasePricesTopic", INTERNAL_BASE_PRICES_TOPIC);
         ReflectionTestUtils.setField(demandMetricsAggregatorStream, "demandMetricsDltTopic", DEMAND_METRICS_DLT_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "internalLastPublishedPricesTopic", INTERNAL_LAST_PUBLISHED_PRICES_TOPIC);
+        ReflectionTestUtils.setField(demandMetricsAggregatorStream, "externalPriceUpdatedTopic", EXTERNAL_PRICE_UPDATED_TOPIC);
 
 
         StreamsBuilder builder = new StreamsBuilder();
@@ -111,10 +120,15 @@ class DemandMetricsAggregatorStreamTest {
 
         demandMetricsInputTopic = testDriver.createInputTopic(DEMAND_METRICS_TOPIC, stringSerde.serializer(), metricEventSerde.serializer());
         demandMetricsDltOutputTopic = testDriver.createOutputTopic(DEMAND_METRICS_DLT_TOPIC, stringSerde.deserializer(), metricEventSerde.deserializer());
+        priceUpdatedOutputTopic = testDriver.createOutputTopic(EXTERNAL_PRICE_UPDATED_TOPIC, stringSerde.deserializer(), priceUpdatedEventSerde.deserializer());
+        internalLastPriceOutputTopic = testDriver.createOutputTopic(INTERNAL_LAST_PUBLISHED_PRICES_TOPIC, stringSerde.deserializer(), priceUpdatedEventSerde.deserializer());
 
-        internalRulesInputTopic = testDriver.createInputTopic(INTERNAL_RULES_TOPIC, uuidSerde.serializer(), ruleDtoSerde.serializer());
-        internalOverridesInputTopic = testDriver.createInputTopic(INTERNAL_OVERRIDES_TOPIC, uuidSerde.serializer(), overrideDtoSerde.serializer());
+        // Topics for populating KTables/GlobalKTables (keyed by String itemId)
+        internalRulesByItemIdInputTopic = testDriver.createInputTopic(INTERNAL_RULES_BY_ITEMID_TOPIC, stringSerde.serializer(), ruleDtoSerde.serializer());
+        internalOverridesByItemIdInputTopic = testDriver.createInputTopic(INTERNAL_OVERRIDES_BY_ITEMID_TOPIC, stringSerde.serializer(), overrideDtoSerde.serializer());
         internalBasePricesInputTopic = testDriver.createInputTopic(INTERNAL_BASE_PRICES_TOPIC, stringSerde.serializer(), basePriceEventSerde.serializer());
+        internalLastPublishedPricesInputTopic = testDriver.createInputTopic(INTERNAL_LAST_PUBLISHED_PRICES_TOPIC, stringSerde.serializer(), priceUpdatedEventSerde.serializer());
+
     }
 
     @AfterEach
@@ -126,40 +140,57 @@ class DemandMetricsAggregatorStreamTest {
         ruleDtoSerde.close();
         overrideDtoSerde.close();
         basePriceEventSerde.close();
-        // stringSerde and uuidSerde are from Serdes factory, no close needed.
+        priceUpdatedEventSerde.close(); // Close new serde
+        listOfRuleDtoSerde.close();   // Close new serde
     }
 
     @Test
-    void testMetricsAggregationWindowingAndDltRouting() { // Renamed for clarity
+    void testMetricsAggregationWindowingAndDltRouting() {
         UUID itemId1 = UUID.randomUUID();
         UUID itemId2 = UUID.randomUUID();
         Instant baseTime = Instant.parse("2023-01-01T10:00:00Z");
 
-        // Window 1 for item1: 10:00:00 - 10:04:59 (assuming 5 min window)
-        inputTopic.pipeInput(itemId1.toString(), MetricEvent.builder().itemId(itemId1).metricType("VIEW").timestamp(baseTime).build(), baseTime.toEpochMilli());
-        inputTopic.pipeInput(itemId1.toString(), MetricEvent.builder().itemId(itemId1).metricType("VIEW").timestamp(baseTime.plusSeconds(60)).build(), baseTime.plusSeconds(60).toEpochMilli());
+        // Populate GKTs/KTables first
+        // Rule for itemId1
+        Map<String,Object> ruleParams = new HashMap<>();
+        ruleParams.put("threshold", 1L);
+        ruleParams.put("adjustmentPercentage", 0.1); // +10%
+        DynamicPricingRuleDto rule1 = DynamicPricingRuleDto.builder().id(UUID.randomUUID()).itemId(itemId1).ruleType("VIEW_COUNT_THRESHOLD").parameters(ruleParams).enabled(true).build();
+        internalRulesByItemIdInputTopic.pipeInput(itemId1.toString(), rule1);
 
-        // Window 1 for item2
-        inputTopic.pipeInput(itemId2.toString(), MetricEvent.builder().itemId(itemId2).metricType("VIEW").timestamp(baseTime.plusSeconds(120)).build(), baseTime.plusSeconds(120).toEpochMilli());
+        // Base price for itemId1
+        ItemBasePriceEvent basePrice1 = ItemBasePriceEvent.builder().itemId(itemId1).basePrice(new BigDecimal("100.00")).eventTimestamp(Instant.now()).build();
+        internalBasePricesInputTopic.pipeInput(itemId1.toString(), basePrice1);
 
-        // Advance stream time to trigger window processing if needed by .foreach action.
-        // The .foreach in the current implementation logs.
-        // To properly test the *output* of the aggregation, the KTable should be materialized
-        // or its .toStream() output should be sent to another topic that can be asserted.
-        // For now, this test ensures the topology builds and can process messages.
-        // A ReadOnlyWindowStore could also be used to query the KTable state.
+        // Metric for itemId1 - should trigger rule
+        demandMetricsInputTopic.pipeInput(itemId1.toString(), MetricEvent.builder().itemId(itemId1).metricType("VIEW").timestamp(baseTime).details(Map.of("count", 2L)).build(), baseTime.toEpochMilli());
+        testDriver.advanceWallClockTime(Duration.ofMinutes(6)); // Advance time to close window
 
-        testDriver.advanceWallClockTime(Duration.ofMinutes(6)); // Advance time past the first window
+        // Assert PriceUpdatedEvent
+        TestRecord<String, PriceUpdatedEvent> priceUpdateRecord = priceUpdatedOutputTopic.readRecord();
+        assertThat(priceUpdateRecord).isNotNull();
+        assertThat(priceUpdateRecord.key()).isEqualTo(itemId1.toString());
+        assertThat(priceUpdateRecord.value().getFinalPrice()).isEqualByComparingTo("110.00"); // 100 * (1 + 0.1)
 
-        // How to assert the results of .count() which materializes to a KTable and then logs via .foreach?
-        // 1. Modify stream to output to a topic: Preferred for black-box testing.
-        // 2. Query the state store: testDriver.getKeyValueStore("item-metric-counts") - requires store to be queryable.
-        // 3. If .foreach calls a mockable component (it calls log directly now), verify interactions.
+        // Assert internal last price topic is updated
+        TestRecord<String, PriceUpdatedEvent> lastPriceRecord = internalLastPriceOutputTopic.readRecord();
+        assertThat(lastPriceRecord).isNotNull();
+        assertThat(lastPriceRecord.value().getFinalPrice()).isEqualByComparingTo("110.00");
 
-        // For this iteration, we are mostly testing that the pipeline can be built and processes messages without error.
-        // The log output from the .foreach would be visible in test logs but not programmatically asserted here.
 
-        // Query the state store for item-metric-counts-store
+        // Test DLT routing
+        MetricEvent invalidEvent = MetricEvent.builder().itemId(null).metricType("INVALID_VIEW").timestamp(baseTime).build();
+        demandMetricsInputTopic.pipeInput("somekey_invalid", invalidEvent, baseTime.toEpochMilli());
+        TestRecord<String, MetricEvent> dltRecord = demandMetricsDltOutputTopic.readRecord();
+        assertThat(dltRecord).isNotNull();
+        assertThat(dltRecord.key()).isEqualTo("somekey_invalid");
+        assertThat(dltRecord.value().getMetricType()).isEqualTo("INVALID_VIEW");
+
+        assertThat(demandMetricsDltOutputTopic.isEmpty()).isTrue();
+        assertThat(priceUpdatedOutputTopic.isEmpty()).isTrue(); // No more valid price updates from this invalid event
+        assertThat(internalLastPriceOutputTopic.isEmpty()).isTrue();
+    }
+}
         ReadOnlyWindowStore<UUID, Long> countStore = testDriver.getWindowStore("item-metric-counts-store"); // Corrected store name
         assertThat(countStore).isNotNull();
 

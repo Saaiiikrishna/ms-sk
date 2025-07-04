@@ -61,7 +61,8 @@ public class DemandMetricsAggregatorStream {
     private final Serde<DynamicPricingRuleDto> dynamicPricingRuleDtoSerde;
     private final Serde<PriceOverrideDto> priceOverrideDtoSerde;
     private final Serde<ItemBasePriceEvent> itemBasePriceEventSerde;
-    private final Serde<PriceUpdatedEvent> priceUpdatedEventSerde; // Added
+    private final Serde<PriceUpdatedEvent> priceUpdatedEventSerde;
+    private final Serde<List<DynamicPricingRuleDto>> listOfRuleDtoSerde; // Added
 
 
     public DemandMetricsAggregatorStream(
@@ -72,7 +73,8 @@ public class DemandMetricsAggregatorStream {
             Serde<DynamicPricingRuleDto> dynamicPricingRuleDtoSerde,
             Serde<PriceOverrideDto> priceOverrideDtoSerde,
             Serde<ItemBasePriceEvent> itemBasePriceEventSerde,
-            Serde<PriceUpdatedEvent> priceUpdatedEventSerde) { // Added
+            Serde<PriceUpdatedEvent> priceUpdatedEventSerde,
+            Serde<List<DynamicPricingRuleDto>> listOfRuleDtoSerde) { // Added
         this.pricingEngineService = pricingEngineService;
         this.dltKafkaTemplate = dltKafkaTemplate;
         this.stringSerde = stringSerde;
@@ -80,7 +82,8 @@ public class DemandMetricsAggregatorStream {
         this.dynamicPricingRuleDtoSerde = dynamicPricingRuleDtoSerde;
         this.priceOverrideDtoSerde = priceOverrideDtoSerde;
         this.itemBasePriceEventSerde = itemBasePriceEventSerde;
-        this.priceUpdatedEventSerde = priceUpdatedEventSerde; // Store
+        this.priceUpdatedEventSerde = priceUpdatedEventSerde;
+        this.listOfRuleDtoSerde = listOfRuleDtoSerde; // Store
     }
 
 
@@ -88,15 +91,37 @@ public class DemandMetricsAggregatorStream {
     public void buildPipeline(StreamsBuilder streamsBuilder) {
         log.info("Building Kafka Streams pipeline for demand metrics aggregation...");
 
-        // GlobalKTables for rules, overrides, and base prices, now keyed by String(itemId)
-        GlobalKTable<String, DynamicPricingRuleDto> rulesByItemIdGTable = streamsBuilder.globalTable(
-                internalRulesByItemIdTopic, // New topic
-                Consumed.with(stringSerde, dynamicPricingRuleDtoSerde), // Key is String(itemId)
-                Materialized.as("rules-by-itemid-global-store"));
+        // Consume internal.rules-by-itemid.v1 as a KStream
+        KStream<String, DynamicPricingRuleDto> rulesByItemIdStream = streamsBuilder.stream(
+                internalRulesByItemIdTopic, Consumed.with(stringSerde, dynamicPricingRuleDtoSerde)
+        );
 
+        // Aggregate rules into a KTable<String, List<DynamicPricingRuleDto>>
+        KTable<String, List<DynamicPricingRuleDto>> aggregatedRulesKTable = rulesByItemIdStream
+            .groupByKey(Grouped.with(stringSerde, dynamicPricingRuleDtoSerde))
+            .aggregate(
+                ArrayList::new, // Initializer
+                (itemId, newRuleDto, aggList) -> { // Adder
+                    // Remove existing rule with the same ID, then add new/updated one
+                    // This handles create and update. For delete, if newRuleDto.isEnabled() is false,
+                    // we could filter it out here, or let the service logic handle disabled rules.
+                    // If a tombstone (null DTO) is sent for a hard delete of a specific rule,
+                    // this logic would need a corresponding subtractor or different handling.
+                    // For now, this simple adder replaces/adds.
+                    aggList.removeIf(rule -> rule.getId().equals(newRuleDto.getId()));
+                    aggList.add(newRuleDto);
+                    return aggList;
+                },
+                Materialized.<String, List<DynamicPricingRuleDto>, KeyValueStore<Bytes, byte[]>>as("aggregated-rules-by-itemid-store")
+                        .withKeySerde(stringSerde)
+                        .withValueSerde(listOfRuleDtoSerde)
+            );
+
+        // GlobalKTables for overrides and base prices (keyed by String(itemId))
+        // No change needed for these GKTs based on the plan for *this* step.
         GlobalKTable<String, PriceOverrideDto> overridesByItemIdGTable = streamsBuilder.globalTable(
-                internalOverridesByItemIdTopic, // New topic
-                Consumed.with(stringSerde, priceOverrideDtoSerde), // Key is String(itemId)
+                internalOverridesByItemIdTopic,
+                Consumed.with(stringSerde, priceOverrideDtoSerde),
                 Materialized.as("overrides-by-itemid-global-store"));
 
         GlobalKTable<String, ItemBasePriceEvent> basePricesGTable = streamsBuilder.globalTable(
@@ -172,49 +197,41 @@ public class DemandMetricsAggregatorStream {
         KStream<String, AggregatedMetric> aggregatedMetricsStream = aggregatedCountsTable.toStream()
             .map((windowedItemId, count) -> {
                 AggregatedMetric am = AggregatedMetric.builder()
-                    .itemId(UUID.fromString(windowedItemId.key())) // Convert String key back to UUID for DTO
+                    .itemId(UUID.fromString(windowedItemId.key()))
                     .metricCount(count)
                     .windowStartTimestamp(windowedItemId.window().start())
                     .windowEndTimestamp(windowedItemId.window().end())
                     .build();
-                return KeyValue.pair(windowedItemId.key(), am); // Keep key as String for joins
+                return KeyValue.pair(windowedItemId.key(), am);
             });
 
-        // ValueJoiner for rules: (AggregatedMetric, DynamicPricingRuleDto) -> EnrichedAggregatedMetric
-        ValueJoiner<AggregatedMetric, DynamicPricingRuleDto, EnrichedAggregatedMetric> ruleJoiner =
-            (aggMetric, ruleDto) -> new EnrichedAggregatedMetric(aggMetric, ruleDto, null, null);
+        // ValueJoiner for rules list: (AggregatedMetric, List<DynamicPricingRuleDto>) -> EnrichedAggregatedMetric
+        ValueJoiner<AggregatedMetric, List<DynamicPricingRuleDto>, EnrichedAggregatedMetric> rulesListJoiner =
+            (aggMetric, rulesList) -> new EnrichedAggregatedMetric(aggMetric, rulesList, null, null);
 
-        // ValueJoiner for overrides: (EnrichedAggregatedMetric, PriceOverrideDto) -> EnrichedAggregatedMetric
         ValueJoiner<EnrichedAggregatedMetric, PriceOverrideDto, EnrichedAggregatedMetric> overrideJoiner =
-            (enriched, overrideDto) -> enriched.withOverride(overrideDto); // Using the 'with' method
+            (enriched, overrideDto) -> enriched.withOverride(overrideDto);
 
-        // ValueJoiner for base prices: (EnrichedAggregatedMetric, ItemBasePriceEvent) -> EnrichedAggregatedMetric
         ValueJoiner<EnrichedAggregatedMetric, ItemBasePriceEvent, EnrichedAggregatedMetric> basePriceJoiner =
             (enriched, basePriceEvent) -> enriched.withBasePriceEvent(basePriceEvent);
 
-        // Perform joins
-        // The key for aggregatedMetricsStream is String(itemId)
-        // The GlobalKTables rulesByItemIdGTable, overridesByItemIdGTable, basePricesGTable are also keyed by String(itemId)
-
         KStream<String, EnrichedAggregatedMetric> enrichedStream = aggregatedMetricsStream
-            .leftJoin(rulesByItemIdGTable,
-                (key, value) -> key, // KeyExtractor for stream (already String(itemId))
-                ruleJoiner)
-            .leftJoin(overridesByItemIdGTable,
+            .leftJoin(aggregatedRulesKTable, // Join with KTable of rule lists
+                (key, value) -> key,
+                rulesListJoiner)
+            .leftJoin(overridesByItemIdGTable, // This remains a GKT as per current plan for overrides
                 (key, value) -> key,
                 overrideJoiner)
             .leftJoin(basePricesGTable,
                 (key, value) -> key,
                 basePriceJoiner);
 
-        // Join with the last published price KTable
         KStream<String, EnrichedAggregatedMetricWithLastPrice> streamWithLastPrice = enrichedStream
             .leftJoin(lastPublishedPricesKTable,
                 (enrichedAggMetric, lastPriceEvent) -> new EnrichedAggregatedMetricWithLastPrice(enrichedAggMetric, Optional.ofNullable(lastPriceEvent)),
-                Joined.with(stringSerde, null, null)); // Serdes for enrichedAggMetric and PriceUpdatedEvent will be inferred or use defaults
+                Joined.with(stringSerde, null, null));
 
 
-        // Process the stream that now includes the last published price
         streamWithLastPrice.flatMapValues(enrichedWithLastPrice -> {
             EnrichedAggregatedMetric enrichedData = enrichedWithLastPrice.getEnrichedAggregatedMetric();
             Optional<PriceUpdatedEvent> lastPriceEventOptional = enrichedWithLastPrice.getLastPriceEvent();
@@ -223,7 +240,6 @@ public class DemandMetricsAggregatorStream {
             log.info("Processing enriched data for item {}: {} with last price: {}",
                      enrichedData.getAggregatedMetric().getItemId(), enrichedData, lastFinalPrice.orElse(null));
 
-            // pricingEngineService.calculatePrice now returns Optional<PriceUpdatedEvent>
             Optional<PriceUpdatedEvent> potentialNewPriceEventOpt = pricingEngineService.calculatePrice(
                 enrichedData,
                 lastFinalPrice
@@ -231,29 +247,20 @@ public class DemandMetricsAggregatorStream {
 
             return potentialNewPriceEventOpt.map(List::of).orElse(Collections.emptyList());
         })
-        .peek((itemIdString, priceUpdateEvent) -> {
-            log.info("Threshold met for item {}. Publishing to external and internal topics: {}", itemIdString, priceUpdateEvent);
-            // Publish to external "catalog.price.updated" topic
-            // Note: KafkaTemplate is not typically used inside a Streams topology directly for main data flow.
-            // Instead, use .to() operator. This requires a KafkaProducer bean for the template.
-            // For now, assuming the service still holds the template for the final publish,
-            // OR this .peek() is just for logging and a subsequent .to() handles publishing.
-            // Based on previous change, DefaultPricingEngineService no longer publishes.
-            // So, this stream IS responsible for publishing.
-        })
-        // Branch to two topics: external and internal for KTable update
+        .peek((itemIdString, priceUpdateEvent) ->
+            log.info("Threshold met for item {}. Publishing to external and internal topics: {}", itemIdString, priceUpdateEvent)
+        )
         .split()
-            .branch((key, value) -> true, // Always send if event is present
+            .branch((key, value) -> true,
                     Branched.withConsumer(kstream -> kstream.to(externalPriceUpdatedTopic, Produced.with(stringSerde, priceUpdatedEventSerde))))
-            .branch((key, value) -> true, // Always send to internal topic as well to update KTable
+            .branch((key, value) -> true,
                     Branched.withConsumer(kstream -> kstream.to(internalLastPublishedPricesTopic, Produced.with(stringSerde, priceUpdatedEventSerde))))
-            .noDefaultBranch(); // Or handle cases where it might not branch, though 'true' predicate covers all.
+            .noDefaultBranch();
 
 
-        log.info("Kafka Streams pipeline with GlobalKTable joins and last price KTable built.");
+        log.info("Kafka Streams pipeline with rule list aggregation and GlobalKTable joins built.");
     }
 
-    // Helper DTO for joining EnrichedAggregatedMetric with Optional<PriceUpdatedEvent>
     private static class EnrichedAggregatedMetricWithLastPrice {
         private final EnrichedAggregatedMetric enrichedAggregatedMetric;
         private final Optional<PriceUpdatedEvent> lastPriceEvent;
@@ -265,10 +272,6 @@ public class DemandMetricsAggregatorStream {
         public EnrichedAggregatedMetric getEnrichedAggregatedMetric() { return enrichedAggregatedMetric; }
         public Optional<PriceUpdatedEvent> getLastPriceEvent() { return lastPriceEvent; }
     }
-
-    // Helper DTO-to-Entity mapping methods are removed as service layer will use DTOs.
-    // private DynamicPricingRuleEntity mapToEntity(DynamicPricingRuleDto dto) { ... }
-    // private PriceOverrideEntity mapToEntity(PriceOverrideDto dto) { ... }
 }
     }
 

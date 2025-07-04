@@ -124,15 +124,16 @@ public class DefaultPricingEngineService implements PricingEngineService {
         // Rule DTO is directly in enrichedData (assuming at most one for now for simplicity from GKT join)
         // If multiple rules, enrichedData.getRuleDto() would need to be List<DynamicPricingRuleDto>
         // For now, to match the previous structure of this method, we'll wrap it in a list if present.
-        List<DynamicPricingRuleDto> applicableRuleDtos = enrichedData.getRuleDto() != null ?
-                                                          List.of(enrichedData.getRuleDto()) :
+        // Corrected: enrichedData now directly contains ruleDtos as a List
+        List<DynamicPricingRuleDto> applicableRuleDtos = enrichedData.getRuleDtos() != null ?
+                                                          enrichedData.getRuleDtos() :
                                                           Collections.emptyList();
         PriceOverrideDto activeOverrideDto = enrichedData.getOverrideDto();
 
 
         log.info("Calculating price for item ID: {} with basePrice: {}, aggregated metrics: {}, {} applicable rules, activeOverride: {}, lastPublishedPrice: {}",
                 itemId, basePrice, aggregatedMetrics,
-                applicableRuleDtos.size(),
+                applicableRuleDtos.size(), // This will now correctly reflect the size of the list
                 activeOverrideDto != null ? activeOverrideDto.getId() : "none",
                 lastPublishedFinalPrice.map(BigDecimal::toPlainString).orElse("N/A"));
 
