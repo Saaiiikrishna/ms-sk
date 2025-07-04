@@ -92,6 +92,9 @@ app:
       cart-checked-out: cart.checked_out
       # For SearchIndexer
       catalog-events-for-indexing: catalog.events.for.indexing # Could be a single topic or multiple
+      # New topics for dynamic pricing and overrides
+      dynamic-rule-events: dynamic-rule-events
+      price-override-events: price-override-events
   outbox:
     poll:
       fixed-delay-ms: 10000 # Poll every 10 seconds

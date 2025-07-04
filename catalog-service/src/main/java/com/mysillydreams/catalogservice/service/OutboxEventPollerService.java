@@ -2,6 +2,9 @@ package com.mysillydreams.catalogservice.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+// Import DTOs that will be used in deserialization
+import com.mysillydreams.catalogservice.dto.DynamicPricingRuleDto;
+import com.mysillydreams.catalogservice.dto.PriceOverrideDto;
 import com.mysillydreams.catalogservice.domain.model.OutboxEventEntity;
 import com.mysillydreams.catalogservice.domain.repository.OutboxEventRepository;
 import com.mysillydreams.catalogservice.kafka.producer.KafkaProducerService;
@@ -153,12 +156,16 @@ public class OutboxEventPollerService {
                 return objectMapper.readValue(payloadJson, com.mysillydreams.catalogservice.kafka.event.BulkPricingRuleEvent.class);
             } else if (eventType.equals("cart.checked_out")) {
                 return objectMapper.readValue(payloadJson, com.mysillydreams.catalogservice.kafka.event.CartCheckedOutEvent.class);
+            } else if (eventType.startsWith("dynamic.pricing.rule.")) { // Covers .created, .updated, .deleted
+                return objectMapper.readValue(payloadJson, DynamicPricingRuleDto.class);
+            } else if (eventType.startsWith("price.override.")) { // Covers .created, .updated, .deleted
+                return objectMapper.readValue(payloadJson, PriceOverrideDto.class);
             }
             // Add more mappings as new event types are introduced
-            log.warn("No specific deserializer found for eventType: {}. Attempting generic Map deserialization.", eventType);
-            return objectMapper.readValue(payloadJson, Map.class); // Fallback to Map
+            log.warn("No specific deserializer found for eventType: {}. Attempting generic Map deserialization for event: {}", eventType, eventEntity.getId());
+            return objectMapper.readValue(payloadJson, java.util.Map.class); // Fallback to Map
         } catch (JsonProcessingException e) {
-            log.error("Failed to deserialize JSON payload for event type {}: {}", eventType, payloadJson, e);
+            log.error("Failed to deserialize JSON payload for event type {} (ID: {}): {}", eventType, eventEntity.getId(), payloadJson, e);
             return null;
         }
     }

@@ -13,6 +13,7 @@ import com.mysillydreams.catalogservice.exception.ResourceNotFoundException;
 import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
@@ -32,7 +33,13 @@ public class DynamicPricingRuleService {
 
     private final DynamicPricingRuleRepository ruleRepository;
     private final CatalogItemRepository itemRepository;
-    // private final OutboxEventService outboxEventService; // TODO: If rule changes need to publish events
+    private final OutboxEventService outboxEventService;
+
+    @Value("${app.kafka.topic.dynamic-rule-events}")
+    private String dynamicRuleEventsTopic;
+
+    // Aggregate type for outbox events related to dynamic pricing rules
+    private static final String AGGREGATE_TYPE_DYNAMIC_RULE = "DynamicPricingRule";
 
     @Transactional
     public DynamicPricingRuleDto createRule(CreateDynamicPricingRuleRequest request, String createdBy) {
@@ -54,9 +61,16 @@ public class DynamicPricingRuleService {
 
         DynamicPricingRuleEntity savedRule = ruleRepository.save(rule);
         log.info("Dynamic pricing rule created with ID: {}", savedRule.getId());
-        // TODO: Publish event via outbox if needed:
-        // outboxEventService.saveOutboxEvent("DynamicPricingRule", savedRule.getId(), "dynamic.pricing.rule.created", "dynamic-rule-events-topic", convertToDto(savedRule));
-        return convertToDto(savedRule);
+
+        DynamicPricingRuleDto ruleDto = convertToDto(savedRule);
+        outboxEventService.saveOutboxEvent(
+                AGGREGATE_TYPE_DYNAMIC_RULE,
+                savedRule.getId(),
+                "dynamic.pricing.rule.created",
+                dynamicRuleEventsTopic,
+                ruleDto
+        );
+        return ruleDto;
     }
 
     @Transactional(readOnly = true)
@@ -110,9 +124,16 @@ public class DynamicPricingRuleService {
 
         DynamicPricingRuleEntity updatedRule = ruleRepository.save(rule);
         log.info("Dynamic pricing rule updated with ID: {}", updatedRule.getId());
-        // TODO: Publish event via outbox:
-        // outboxEventService.saveOutboxEvent("DynamicPricingRule", updatedRule.getId(), "dynamic.pricing.rule.updated", "dynamic-rule-events-topic", convertToDto(updatedRule));
-        return convertToDto(updatedRule);
+
+        DynamicPricingRuleDto ruleDto = convertToDto(updatedRule);
+        outboxEventService.saveOutboxEvent(
+                AGGREGATE_TYPE_DYNAMIC_RULE,
+                updatedRule.getId(),
+                "dynamic.pricing.rule.updated",
+                dynamicRuleEventsTopic,
+                ruleDto
+        );
+        return ruleDto;
     }
 
     @Transactional
@@ -121,8 +142,19 @@ public class DynamicPricingRuleService {
         DynamicPricingRuleEntity rule = ruleRepository.findById(ruleId)
                 .orElseThrow(() -> new ResourceNotFoundException("DynamicPricingRule", "id", ruleId));
 
-        // TODO: Publish event via outbox before deleting:
-        // outboxEventService.saveOutboxEvent("DynamicPricingRule", rule.getId(), "dynamic.pricing.rule.deleted", "dynamic-rule-events-topic", convertToDto(rule));
+        // Convert to DTO for the payload before deleting the entity
+        DynamicPricingRuleDto ruleDto = convertToDto(rule);
+
+        outboxEventService.saveOutboxEvent(
+                AGGREGATE_TYPE_DYNAMIC_RULE,
+                rule.getId(),
+                "dynamic.pricing.rule.deleted",
+                dynamicRuleEventsTopic,
+                // For delete, payload can be the DTO or just the ID map if preferred
+                // Using DTO for consistency, consumer can decide what to use
+                ruleDto
+        );
+
         ruleRepository.delete(rule);
         log.info("Dynamic pricing rule deleted with ID: {}", ruleId);
     }
