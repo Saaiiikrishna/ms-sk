@@ -1,0 +1,58 @@
+apiVersion: autoscaling/v2 # Use v2 for more features like custom metrics
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-api-hpa
+  namespace: default # Or your target namespace
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-api-deployment # Name of the Deployment to scale
+  minReplicas: 3 # Minimum number of replicas (should match Deployment's initial replicas or be lower)
+  maxReplicas: 10 # Maximum number of replicas
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization # Target CPU utilization percentage
+        averageUtilization: 80 # Target 80% CPU utilization
+  # - type: Resource # Optional: Scale based on memory as well
+  #   resource:
+  #     name: memory
+  #     target:
+  #       type: Utilization
+  #       averageUtilization: 75
+  # - type: Pods # Example: Scale based on Kafka consumer lag (requires custom metrics adapter)
+  #   pods:
+  #     metric:
+  #       name: kafka_consumergroup_lag_sum # Custom metric name from Prometheus/custom metrics server
+  #     target:
+  #       type: AverageValue
+  #       averageValue: "100" # Target average lag of 100 messages per pod
+  behavior: # Optional: Configure scaling behavior (rate of scaling up/down)
+    scaleDown:
+      stabilizationWindowSeconds: 300 # Wait 5 minutes before scaling down
+      policies:
+      - type: Percent
+        value: 100 # Allow scaling down all unneeded pods at once
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0 # Scale up immediately
+      policies:
+      - type: Percent
+        value: 100 # Allow doubling the pod count if needed
+        periodSeconds: 60
+      - type: Pods
+        value: 4 # Or add a fixed number of pods
+        periodSeconds: 60
+      selectPolicy: Max # Use the policy that allows the most scaling up
+---
+# Notes:
+# - This HPA targets CPU utilization at 80%.
+# - `minReplicas` is set to 3, matching the Deployment's initial replica count. `maxReplicas` is 10.
+# - The Kubernetes Metrics Server must be installed in your cluster for resource metrics (CPU, memory) to work.
+# - For scaling based on custom metrics (like Kafka lag), you need a custom metrics adapter (e.g., Prometheus Adapter, KEDA).
+# - The `behavior` section (available in autoscaling/v2beta2 and later v2) allows fine-tuning of scaling speed and stabilization.
+#   The example provides aggressive scale-up and conservative scale-down. Adjust as needed.
+# - Ensure `scaleTargetRef.name` matches your Deployment's name.

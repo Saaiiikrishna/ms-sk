@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-api-deployment
+  namespace: default # Or your target namespace
+  labels:
+    app: order-api
+spec:
+  replicas: 3 # As specified in the guide
+  selector:
+    matchLabels:
+      app: order-api
+  template:
+    metadata:
+      labels:
+        app: order-api
+      annotations:
+        prometheus.io/scrape: "true" # Instruct Prometheus to scrape metrics
+        prometheus.io/port: "8080"   # Port Actuator is running on (default for Spring Boot)
+        prometheus.io/path: "/actuator/prometheus" # Path for Prometheus endpoint
+    spec:
+      containers:
+      - name: order-api
+        image: your-docker-registry/order-api:latest # Replace with your actual image path and tag
+        imagePullPolicy: IfNotPresent # Or Always, depending on your image update strategy
+        ports:
+        - containerPort: 8080 # Port the application listens on
+        envFrom:
+        - configMapRef:
+            name: order-api-config # Reference the ConfigMap
+        - secretRef:
+            name: order-api-secret   # Reference the Secret
+        # Optional: Define specific environment variables directly if needed
+        # env:
+        # - name: EXAMPLE_ENV_VAR
+        #   value: "example_value"
+        resources: # Define resource requests and limits
+          requests:
+            memory: "512Mi" # Adjust based on application needs
+            cpu: "250m"     # Adjust based on application needs (0.25 vCPU)
+          limits:
+            memory: "1Gi"  # Adjust based on application needs
+            cpu: "1"        # Adjust based on application needs (1 vCPU)
+        readinessProbe: # Check if the application is ready to serve traffic
+          httpGet:
+            path: /actuator/health/readiness # Spring Boot Actuator health endpoint
+            port: 8080
+          initialDelaySeconds: 20 # Time to wait before first probe
+          periodSeconds: 10       # How often to probe
+          failureThreshold: 3
+        livenessProbe: # Check if the application is alive
+          httpGet:
+            path: /actuator/health/liveness # Spring Boot Actuator health endpoint
+            port: 8080
+          initialDelaySeconds: 60 # Time to wait before first probe
+          periodSeconds: 15       # How often to probe
+          failureThreshold: 3
+      # Optional: imagePullSecrets if your image is in a private registry
+      # imagePullSecrets:
+      # - name: your-registry-secret
+---
+# Notes:
+# - Replace 'your-docker-registry/order-api:latest' with your actual image.
+# - Adjust resource requests and limits based on your application's performance characteristics.
+# - Ensure the namespace matches where your ConfigMap and Secret are deployed.
+# - Health probes assume Spring Boot Actuator is enabled and configured.
+# - Prometheus annotations are for metrics collection; ensure your Prometheus setup can discover these.

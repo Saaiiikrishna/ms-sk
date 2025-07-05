@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-api-service
+  namespace: default # Or your target namespace
+  labels:
+    app: order-api
+spec:
+  type: ClusterIP # Exposes the service on an internal IP in the cluster
+  selector:
+    app: order-api # Selects pods with this label (must match Deployment's pod labels)
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80 # Port the service will be available on within the cluster
+    targetPort: 8080 # Port the application (container) is listening on
+---
+# Notes:
+# - This creates a ClusterIP service, meaning it's only reachable from within the Kubernetes cluster.
+# - The `port` is the port other services in the cluster will use to talk to `order-api-service`.
+# - The `targetPort` is the port your `order-api` container is listening on (8080 in this case).
+# - If you need to expose this service externally (outside the cluster), you would typically use an Ingress controller
+#   or a Service of type LoadBalancer or NodePort (though Ingress is more common for HTTP).
