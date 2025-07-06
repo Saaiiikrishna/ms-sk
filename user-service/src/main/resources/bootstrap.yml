@@ -125,7 +125,7 @@ spring:
         # Example: if backend is 'secret', then 'secret/user-service/db/url' is the target.
         # If backend is 'kv' and path is 'user-service/data/db/url' for KV v2.
         # For KV v2, the path used in spring.cloud.vault.kv.backend is usually the mount path,
-        // and then application name is appended, then /data/ is used.
+# and then application name is appended, then /data/ is used.
         # e.g. if backend is 'secret', app name 'user-service', it looks for 'secret/data/user-service'.
         # To match ${vault:user-service/db/url}, we need to ensure the path lookup is direct.
         # This syntax might bypass the default application context behavior.
@@ -177,34 +177,3 @@ spring:
         # Let's assume secret path is "secret/data/user-service" and keys are "db_url", "db_username", "db_password".
         # Then application.yml will use ${db_url}, ${db_username}, ${db_password}.
         # This seems the most straightforward interpretation of standard Spring Cloud Vault.
-```
-
-**Correction/Clarification for bootstrap.yml based on typical Spring Cloud Vault usage:**
-The syntax `${vault:path/key}` is for very specific direct lookups and bypasses some of the convenient context pathing.
-A more standard setup for `bootstrap.yml` that aligns with using `${db.url}` in `application.yml` would be:
-
-```yaml
-# bootstrap.yml
-spring:
-  application:
-    name: user-service
-  cloud:
-    vault:
-      host: ${VAULT_HOST:vault}
-      port: ${VAULT_PORT:8200}
-      scheme: ${VAULT_SCHEME:http}
-      authentication: ${VAULT_AUTH_METHOD:APPROLE}
-      app-role:
-        role-id: ${VAULT_ROLE_ID:}
-        secret-id: ${VAULT_SECRET_ID:}
-      kv:
-        enabled: true
-        backend: secret # Assumes KV v2 engine mounted at "secret/"
-        # By setting spring.application.name=user-service, Spring Cloud Vault
-        # will by default look for secrets at "secret/data/user-service"
-        # Keys like "db.url", "db.username", "db.password" are expected there.
-      transit:
-        enabled: true
-      fail-fast: true
-```
-I will proceed with this standard interpretation for `bootstrap.yml`. This means the `application.yml` will need to use `${db.url}`, etc.

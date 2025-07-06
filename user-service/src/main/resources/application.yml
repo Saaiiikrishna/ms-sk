@@ -158,4 +158,3 @@ spring:
       ddl-auto: create-drop # Common for tests
     show-sql: true
   # Kafka test properties usually handled by @EmbeddedKafka or Testcontainers
-```

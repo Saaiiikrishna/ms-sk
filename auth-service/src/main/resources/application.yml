@@ -146,4 +146,3 @@ spring:
 #   username: ${KEYCLOAK_ADMIN_USERNAME} # If using user credentials
 #   password: ${KEYCLOAK_ADMIN_PASSWORD}
 #   grant-type: client_credentials # Or password
-```
