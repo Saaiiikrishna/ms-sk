@@ -1,0 +1,19 @@
+{
+  "namespace": "com.mysillydreams.delivery.dto.avro",
+  "type": "record",
+  "name": "AddressAvro",
+  "doc": "Reusable address structure for Avro events within Delivery Service context.",
+  "fields": [
+    {"name": "street", "type": "string"},
+    {"name": "street2", "type": ["null", "string"], "default": null},
+    {"name": "city", "type": "string"},
+    {"name": "stateOrProvince", "type": "string"},
+    {"name": "postalCode", "type": "string"},
+    {"name": "countryCode", "type": "string"},
+    {"name": "latitude", "type": ["null", "double"], "default": null},
+    {"name": "longitude", "type": ["null", "double"], "default": null},
+    {"name": "contactName", "type": ["null", "string"], "default": null},
+    {"name": "contactPhone", "type": ["null", "string"], "default": null},
+    {"name": "instructions", "type": ["null", "string"], "default": null}
+  ]
+}
