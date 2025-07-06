@@ -8,6 +8,7 @@ import com.mysillydreams.userservice.dto.delivery.OrderAssignmentDto;
 import com.mysillydreams.userservice.dto.delivery.OtpVerificationRequestDto;
 import com.mysillydreams.userservice.service.UserService; // To get UserEntity if needed for DeliveryProfile
 import com.mysillydreams.userservice.service.delivery.*;
+import com.mysillydreams.userservice.repository.delivery.OrderAssignmentRepository;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -58,16 +59,19 @@ public class DeliveryController {
     private final DeliveryAssignmentService deliveryAssignmentService;
     private final DeliveryEventService deliveryEventService;
     private final DeliveryDocumentStorageService deliveryDocumentStorageService; // For photo uploads
+    private final OrderAssignmentRepository orderAssignmentRepository;
 
     @Autowired
     public DeliveryController(DeliveryOnboardingService deliveryOnboardingService,
                               DeliveryAssignmentService deliveryAssignmentService,
                               DeliveryEventService deliveryEventService,
-                              DeliveryDocumentStorageService deliveryDocumentStorageService) {
+                              DeliveryDocumentStorageService deliveryDocumentStorageService,
+                              OrderAssignmentRepository orderAssignmentRepository) {
         this.deliveryOnboardingService = deliveryOnboardingService;
         this.deliveryAssignmentService = deliveryAssignmentService;
         this.deliveryEventService = deliveryEventService;
         this.deliveryDocumentStorageService = deliveryDocumentStorageService;
+        this.orderAssignmentRepository = orderAssignmentRepository;
     }
 
     // Helper to get current authenticated user's ID (assuming it's a UUID from JWT 'sub')
