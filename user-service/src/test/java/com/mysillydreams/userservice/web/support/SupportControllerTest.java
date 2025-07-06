@@ -264,4 +264,3 @@ public class SupportControllerTest {
                 .andExpect(jsonPath("$.content", hasSize(1)));
     }
 }
-```

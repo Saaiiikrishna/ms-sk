@@ -126,7 +126,7 @@ public class FullSagaSmokeTest {
 
         // Start Order-API
         // Assign a random port for Order-API
-        int orderApiPort = TestRestTemplate.getFreePort();
+        int orderApiPort = findFreePort();
         orderApiBaseUrl = "http://localhost:" + orderApiPort;
         appProps.put("server.port", String.valueOf(orderApiPort));
         orderApiContext = new SpringApplicationBuilder(OrderApiApplication.class)
@@ -137,7 +137,7 @@ public class FullSagaSmokeTest {
 
         // Start Order-Core
         // Assign a random port for Order-Core's internal API (if active)
-        int orderCorePort = TestRestTemplate.getFreePort();
+        int orderCorePort = findFreePort();
         orderCoreInternalBaseUrl = "http://localhost:" + orderCorePort;
         // Create a new map or modify for Order-Core specific properties if needed
         Map<String, Object> orderCoreAppProps = new HashMap<>(appProps);
@@ -215,6 +215,15 @@ public class FullSagaSmokeTest {
 
         log.warn("E2E test is a scaffold. Full event flow, Kafka consumption/production in test, and detailed assertions need implementation.");
         assertThat(true).as("Placeholder assertion for E2E test structure").isTrue();
+    }
+
+    private static int findFreePort() {
+        try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
+            socket.setReuseAddress(true);
+            return socket.getLocalPort();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("Unable to allocate free port", e);
+        }
     }
 
     // Helper to get a KafkaTemplate configured for Avro for publishing test events

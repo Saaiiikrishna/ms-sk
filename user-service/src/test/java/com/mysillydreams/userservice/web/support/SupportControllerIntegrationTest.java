@@ -227,6 +227,3 @@ public class SupportControllerIntegrationTest extends UserIntegrationTestBase {
         assertThat(updatedTicket.get().getStatus()).isEqualTo(TicketStatus.RESOLVED);
     }
 }
-```
-
-This concludes the planned integration tests for Step 49.

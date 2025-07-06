@@ -194,6 +194,3 @@ public class AdminControllerTest {
                 .andExpect(jsonPath("$.content[0].id", is(ip.getId().toString())));
     }
 }
-```
-
-This covers the unit tests for `AdminController`. Next will be integration tests for it.
