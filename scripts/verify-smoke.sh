@@ -146,5 +146,8 @@ else
   exit 1
 fi
 
+# After testing order/reservation:
+curl -s http://${INVENTORY_SERVICE_HOST}/inventory/SMOKE-SKU | jq .
+
 log_info "Smoke test completed successfully!"
 exit 0
