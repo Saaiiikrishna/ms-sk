@@ -1,0 +1,75 @@
+# Test-specific properties for payment-service
+
+spring:
+  # For unit tests not using Testcontainers, an embedded DB like H2 might be configured here.
+  # For Testcontainer-based integration tests, datasource and kafka properties
+  # will typically be overridden dynamically by @DynamicPropertySource in the test class.
+  datasource:
+    url: jdbc:h2:mem:payment_service_test_db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop # For H2, create schema on startup and drop on shutdown
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+    show-sql: true # Often useful to see SQL in tests
+
+  flyway:
+    enabled: false # Disable Flyway for H2 if JPA creates schema
+
+  kafka:
+    bootstrap-servers: localhost:9094 # Placeholder, Testcontainers will override
+    consumer:
+      group-id: payment-service-test-group
+      properties:
+        schema.registry.url: http://localhost:8085 # Placeholder
+        auto.offset.reset: earliest
+    producer:
+      properties:
+        schema.registry.url: http://localhost:8085 # Placeholder
+
+# Payment Service specific test properties
+payment:
+  outbox:
+    poll:
+      delay: 1000 # Faster polling for tests, if poller is enabled
+      initialDelay: 2000
+  razorpay:
+    key-id: "test_key_id"  # Dummy value for tests not hitting actual Razorpay
+    key-secret: "test_key_secret" # Dummy value
+    webhook:
+      secret: "test_webhook_secret" # Dummy value for webhook tests
+
+# Disable Keycloak for tests if not testing security aspects explicitly
+# keycloak.enabled: false
+
+logging:
+  level:
+    com.mysillydreams.payment: DEBUG
+    com.razorpay: DEBUG # For Razorpay SDK interactions during tests
+    # org.springframework.kafka: DEBUG
+    # org.hibernate.SQL: DEBUG
+---
+# Profile for Testcontainer-based tests
+spring:
+  config:
+    activate:
+      on-profile: testcontainers
+  flyway:
+    enabled: true # Usually true for Testcontainers with Postgres to test actual migrations
+  jpa:
+    hibernate:
+      ddl-auto: validate # With Flyway, JPA should validate the schema
+  # Datasource, Kafka, and potentially Razorpay mock URLs are set by Testcontainers via @DynamicPropertySource
+  payment:
+    razorpay:
+      # key-id, key-secret, webhook.secret might be overridden by test setup if using WireMock for Razorpay
+      # For example, key-id: "mock_key_id"
+      # Or, if hitting Razorpay sandbox, use actual test credentials (not recommended for automated tests in CI without secrets)
+      key-id: ${RAZORPAY_TEST_KEY_ID:rzp_test_xxxxxxxxxxxxxx}
+      key-secret: ${RAZORPAY_TEST_KEY_SECRET:your_test_secret}
+      webhook:
+        secret: ${RAZORPAY_TEST_WEBHOOK_SECRET:testwebhooksecret123}

@@ -1,0 +1,10 @@
+{
+  "namespace": "com.mysillydreams.payment.dto",
+  "type": "record",
+  "name": "PaymentSucceededEvent",
+  "fields": [
+    { "name": "orderId", "type": "string" },
+    { "name": "paymentId", "type": "string" },
+    { "name": "transactionTimestamp", "type": { "type": "long", "logicalType": "timestamp-millis" }}
+  ]
+}

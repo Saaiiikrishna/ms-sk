@@ -1,0 +1,10 @@
+{
+  "namespace": "com.mysillydreams.payment.dto",
+  "type": "record",
+  "name": "PaymentFailedEvent",
+  "fields": [
+    { "name": "orderId", "type": "string" },
+    { "name": "reason", "type": "string" }, // Changed "error" to "reason" for consistency
+    { "name": "transactionTimestamp", "type": { "type": "long", "logicalType": "timestamp-millis" }}
+  ]
+}

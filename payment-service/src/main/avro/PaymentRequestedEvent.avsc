@@ -1,0 +1,10 @@
+{
+  "namespace":"com.mysillydreams.payment.dto",
+  "type":"record",
+  "name":"PaymentRequestedEvent",
+  "fields":[
+    {"name":"orderId","type":"string"},
+    {"name":"amount","type":"double"},
+    {"name":"currency","type":"string"}
+  ]
+}

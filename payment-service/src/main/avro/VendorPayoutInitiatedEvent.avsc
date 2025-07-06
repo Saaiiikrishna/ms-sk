@@ -1,0 +1,13 @@
+{
+  "namespace":"com.mysillydreams.payment.dto",
+  "type":"record",
+  "name":"VendorPayoutInitiatedEvent",
+  "fields":[
+    {"name":"payoutId","type":"string"},
+    {"name":"paymentId","type":"string"},
+    {"name":"vendorId","type":"string"},
+    {"name":"netAmount","type":"double"},
+    {"name":"currency","type":"string"},
+    {"name":"initiatedAt", "type": { "type": "long", "logicalType": "timestamp-millis" }}
+  ]
+}

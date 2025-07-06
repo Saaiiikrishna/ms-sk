@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-core
+  namespace: dev # Assuming 'dev' namespace
+  labels:
+    app: inventory-core
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: inventory-core
+  template:
+    metadata:
+      labels:
+        app: inventory-core
+    spec:
+      containers:
+        - name: inventory-core
+          image: myregistry/inventory-core:1.0.0 # Placeholder, will be updated by CI/CD
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: inventory-core-config
+            - secretRef:
+                name: inventory-core-secrets
+          ports:
+            - containerPort: 8082 # Matching server.port in application.yml
+              name: http # Optional, but good practice
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082 # Matching containerPort
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082 # Matching containerPort
+            initialDelaySeconds: 30 # Longer initial delay for liveness
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources: # From user's guide
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          # volumeMounts:
+          # terminationMessagePath:
+          # terminationMessagePolicy:
+      # affinity:
+      # tolerations:
+      # serviceAccountName:
+      # terminationGracePeriodSeconds: 30 # Default is 30s. Ensure enough for graceful shutdown.
+                                        # Spring Boot 3 default is also 30s.
+                                        # If outbox poller needs more time to flush, adjust here and in Spring Boot (server.shutdown.grace-period)
+                                        # and lifecycle.timeout-per-shutdown-phase for Kafka listeners etc.
+                                        # For now, default is likely fine.

@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: dev # Assuming 'dev' namespace
+  labels:
+    app: payment-service
+spec:
+  replicas: 2 # Adjust as needed; might start with 2 for HA
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+        - name: payment-service
+          image: myregistry/payment-service:1.0.0 # Placeholder, updated by CI/CD
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: payment-service-config
+            - secretRef:
+                name: payment-service-secrets
+          ports:
+            - containerPort: 8083 # Matching server.port in payment's application.yml
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8083
+            initialDelaySeconds: 20 # Payment service might have more to init (Razorpay client, etc.)
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8083
+            initialDelaySeconds: 45 # Longer delay for liveness
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources: # Adjust based on performance testing
+            requests:
+              cpu: "300m"   # Slightly more than inventory-core due to crypto, external calls
+              memory: "640Mi" # Increased memory for Razorpay SDK, potential JSON processing
+            limits:
+              cpu: "750m"
+              memory: "1.2Gi" # Increased memory
+      # terminationGracePeriodSeconds: 45 # If longer shutdown for outbox/async tasks needed
+      # serviceAccountName: payment-service-sa # If specific SA with permissions is used
+      # affinity: ...
+      # tolerations: ...
