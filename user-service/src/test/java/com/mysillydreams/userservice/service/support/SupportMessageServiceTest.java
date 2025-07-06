@@ -201,6 +201,7 @@ class SupportMessageServiceTest {
         });
     }
 }
+
     @Mock private SupportMessageRepository mockMessageRepository;
     @Mock private SupportTicketRepository mockTicketRepository;
     @Mock private SupportKafkaClient mockSupportKafkaClient;
