@@ -1,19 +1,25 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e # Exit immediately if a command exits with a non-zero status.
-set -u # Treat unset variables as an error.
-set -o pipefail # Causes a pipeline to return the exit status of the last command in the pipe that failed.
+# Configurable
+ORDER_API_URL="${ORDER_API_URL:-http://order-api.dev.svc.cluster.local}"
+PAYMENT_API_URL="${PAYMENT_API_URL:-http://payment-service.dev.svc.cluster.local}" # Used for health check
+# INVENTORY_API_URL was in user sketch, but not used in the new script logic, PAYMENT_API_URL is for payment service health.
+# For local testing, these might be localhost:port
+# ORDER_API_URL="${ORDER_API_URL:-http://localhost:8080}"
+# PAYMENT_API_URL="${PAYMENT_API_URL:-http://localhost:8083}"
 
-# --- Configuration - Get from environment variables or use defaults ---
-ORDER_API_URL="${ORDER_API_URL:-http://localhost:8080}" # Default for local if not set by CI
-ORDER_CORE_INTERNAL_URL="${ORDER_CORE_INTERNAL_URL:-http://localhost:8081}" # Default for local
-KAFKA_BROKERS_DEV="${KAFKA_BROKERS_DEV:-localhost:9092}"
-# Topic where Order-API sends its initial order creation event
-ORDER_API_CREATED_TOPIC="${ORDER_API_CREATED_TOPIC:-order.api.created}"
-# Topic where Order-Core confirms its own creation (if different, or use Order-API's)
-# For this smoke test, we'll focus on Order-API's event and Order-Core's DB state via internal API.
 
-KAFKACAT_CMD="kafkacat" # Assumes kafkacat is in PATH
+KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-kafka.dev.svc.cluster.local:9092}"
+# KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-localhost:9092}" # For local
+TIMEOUT="${TIMEOUT:-60}" # Timeout for Kafka consumption steps in seconds
+
+SMOKE_SKU="SMOKE-SKU-$(date +%s)" # Unique SKU for each test run
+
+# Topics from application.yml of payment-service
+TOPIC_ORDER_PAYMENT_SUCCEEDED="${TOPIC_ORDER_PAYMENT_SUCCEEDED:-order.payment.succeeded}"
+TOPIC_VENDOR_PAYOUT_INITIATED="${TOPIC_VENDOR_PAYOUT_INITIATED:-vendor.payout.initiated}"
+TOPIC_VENDOR_PAYOUT_SUCCEEDED="${TOPIC_VENDOR_PAYOUT_SUCCEEDED:-vendor.payout.succeeded}"
 
 # --- Helper Functions ---
 log_info() {
@@ -26,128 +32,152 @@ log_error() {
 
 check_command() {
   if ! command -v "$1" &> /dev/null; then
-    log_error "$1 could not be found. Please install it."
+    log_error "Command '$1' could not be found. Please install it or ensure it's in PATH."
     exit 1
   fi
 }
 
+# Function to consume a single JSON message from Kafka using kcat (kafkacat)
+# Adapted from user's kafka-console-consumer skeleton
+# Usage: consume_kafka_message <topic_name>
+consume_kafka_message() {
+  local topic="$1"
+  local message_content
+  local kcat_cmd="kafkacat" # Could be kcat
+
+  log_info "Attempting to consume 1 message from topic '$topic' with timeout ${TIMEOUT}s..."
+
+  # kcat options:
+  # -b <broker>: Kafka broker address
+  # -C: Consumer mode
+  # -t <topic>: Topic to consume from
+  # -c 1: Consume 1 message then exit
+  # -e: Exit on EOF (when -c 1 is met)
+  # -J: Output message value as JSON (if messages are JSON or Avro/JSON)
+  # -q: Quiet mode
+  # -o end: Start consuming from the end of the topic. This is crucial for CI to get "next" message.
+  #         Requires message to be produced AFTER consumer starts or within a very short window.
+  #         The `timeout` command wraps this.
+  # The original skeleton used --from-beginning, which is good for isolated test topics
+  # but can be slow or pick old messages in shared topics.
+  # For smoke tests, usually we want the *next* message produced by the test run.
+  # Using a unique consumer group ID with -o earliest might be more robust if available.
+  # For now, -o end, and rely on the test producing quickly.
+  # The user skeleton used --from-beginning. Let's try that with a unique group.
+  local consumer_group="smoke-test-consumer-$(uuidgen)"
+  message_content=$(timeout "${TIMEOUT}s" "$kcat_cmd" -b "$KAFKA_BOOTSTRAP" -C -G "$consumer_group" "$topic" -o beginning -c 1 -e -J -q)
+
+
+  if [ -z "$message_content" ]; then
+    log_error "Failed to consume message from topic '$topic' within ${TIMEOUT}s."
+    return 1 # Error code
+  fi
+  echo "$message_content" # Return the consumed message (value only due to -J)
+  return 0 # Success
+}
+
 # --- Pre-flight checks ---
+log_info "Performing pre-flight checks..."
 check_command curl
 check_command jq
-check_command "$KAFKACAT_CMD"
-
-log_info "Starting smoke test..."
-log_info "Order API URL: $ORDER_API_URL"
-log_info "Order Core Internal URL: $ORDER_CORE_INTERNAL_URL"
-log_info "Kafka Brokers: $KAFKA_BROKERS_DEV"
-log_info "Order API Created Topic: $ORDER_API_CREATED_TOPIC"
+check_command kafkacat # Or kcat
 
 # --- Test Steps ---
+log_info "🚀 Starting E2E Smoke Test for Payment & Payout Flow..."
 
-# 1. Create a new order via Order-API
-log_info "Step 1: Creating a new order via Order-API..."
-CUSTOMER_ID=$(uuidgen) # Generate a random customer UUID
-IDEMPOTENCY_KEY=$(uuidgen)
-
-# Basic payload, adjust if your CreateOrderRequest is different
-CREATE_ORDER_PAYLOAD=$(cat <<EOF
+# 1. Create an order via Order API (this should trigger payment requested event)
+log_info "➡️ Step 1: Creating order via Order API (${ORDER_API_URL}/orders)..."
+CUSTOMER_ID_SMOKE="smoke-cust-$(uuidgen | cut -d'-' -f1)"
+IDEMPOTENCY_KEY_SMOKE="smoke-idem-$(uuidgen)"
+CREATE_ORDER_JSON_PAYLOAD=$(cat <<EOF
 {
-  "items": [
-    {
-      "productId": "$(uuidgen)",
-      "quantity": 1,
-      "price": 10.99
-    }
-  ],
-  "currency": "USD"
+  "items":[{"productId":"$SMOKE_SKU","quantity":1, "price": 200.50}],
+  "currency":"INR"
 }
 EOF
 )
-
-# Note: Order-API requires Keycloak auth. This curl won't work without a valid token.
-# For CI smoke tests, this often involves:
-#  a) Temporarily disabling security on a dev/test deployment for this specific test path.
-#  b) Using a pre-configured test user and obtaining a token via Keycloak API.
-#  c) Using a service account token if Order-API allows machine-to-machine auth.
-# For this script, we'll assume security might be relaxed or a token is handled externally if needed.
-# If a token is needed, it should be passed via an environment variable like $AUTH_TOKEN.
-# Example with token: curl -s -X POST -H "Authorization: Bearer $AUTH_TOKEN" ...
-API_RESPONSE=$(curl -s -X POST \
+ORDER_API_RESPONSE=$(curl -s -X POST "${ORDER_API_URL}/orders" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
-  -H "X-Customer-Id: $CUSTOMER_ID" \
-  -d "$CREATE_ORDER_PAYLOAD" \
-  "${ORDER_API_URL}/orders")
+  -H "Idempotency-Key: $IDEMPOTENCY_KEY_SMOKE" \
+  -H "X-Customer-Id: $CUSTOMER_ID_SMOKE" \
+  -d "$CREATE_ORDER_JSON_PAYLOAD")
 
-log_info "Order-API response: $API_RESPONSE"
-
-ORDER_ID=$(echo "$API_RESPONSE" | jq -r '.orderId')
-
+ORDER_ID=$(echo "$ORDER_API_RESPONSE" | jq -r '.orderId // .id // ""')
 if [ -z "$ORDER_ID" ] || [ "$ORDER_ID" == "null" ]; then
-  log_error "Failed to create order or extract orderId from response."
+  log_error "Failed to create order or extract orderId. Order API Response: $ORDER_API_RESPONSE"
   exit 1
 fi
-log_info "Order created successfully via Order-API. Order ID: $ORDER_ID"
+log_info "  ✅ Order created successfully. Order ID: $ORDER_ID"
 
 
-# 2. Verify OrderCreatedEvent on Kafka (from Order-API)
-# This is a simplified check. Parsing Avro in shell is complex.
-# If JSON: kafkacat -b $KAFKA_BROKERS_DEV -C -t $ORDER_API_CREATED_TOPIC -e -J -c 1 -o -10s (consume last message in 10s window)
-# For Avro, you'd need schema registry integration with kafkacat or use a dedicated consumer tool.
-# This example just checks if a message containing the orderId appears on the topic.
-log_info "Step 2: Verifying OrderCreatedEvent on Kafka topic '$ORDER_API_CREATED_TOPIC' for order ID $ORDER_ID..."
-KAFKA_CONSUME_TIMEOUT_MS=30000 # 30 seconds
-EVENT_FOUND=false
+# 2. Await order.payment.succeeded event
+log_info "➡️ Step 2: Awaiting '$TOPIC_ORDER_PAYMENT_SUCCEEDED' event for Order ID $ORDER_ID..."
+PAYMENT_SUCCEEDED_EVENT_JSON=$(consume_kafka_message "$TOPIC_ORDER_PAYMENT_SUCCEEDED")
+if [ $? -ne 0 ]; then exit 1; fi
 
-# Consume for a few seconds, looking for the order ID.
-# -o -${KAFKA_CONSUME_TIMEOUT_MS}ms: Start consuming from KAFKA_CONSUME_TIMEOUT_MS ago to catch recent messages.
-# -e: Exit when last message is reached (or timeout).
-# -c 10: Consume up to 10 messages then exit (to avoid hanging if many messages)
-# We are primarily interested in a message with our ORDER_ID.
-# This is a best-effort check in shell. A proper client would be better.
-if "$KAFKACAT_CMD" -b "$KAFKA_BROKERS_DEV" -C -t "$ORDER_API_CREATED_TOPIC" -o -${KAFKA_CONSUME_TIMEOUT_MS}ms -e -c 10 | grep -q "$ORDER_ID"; then
-  EVENT_FOUND=true
-  log_info "OrderCreatedEvent found on Kafka for order ID $ORDER_ID."
-else
-  log_warn "OrderCreatedEvent NOT found on Kafka for order ID $ORDER_ID within the timeout/message count. This might be an issue or test flakiness."
-  # Depending on strictness, you might exit 1 here. For now, a warning.
-fi
+log_info "  Received from $TOPIC_ORDER_PAYMENT_SUCCEEDED: $PAYMENT_SUCCEEDED_EVENT_JSON"
+RECEIVED_ORDER_ID_PAY_SUCC=$(echo "$PAYMENT_SUCCEEDED_EVENT_JSON" | jq -r '.orderId') # Assuming payload is the event itself
+RAZORPAY_PAYMENT_ID=$(echo "$PAYMENT_SUCCEEDED_EVENT_JSON" | jq -r '.paymentId')
 
-
-# 3. Verify order status in Order-Core via Internal API
-# This step assumes Order-Core has processed the event from Order-API and created its own internal order record.
-# The topic Order-Core listens to for Order-API's events needs to be consistent.
-# (e.g., OrderSagaService listening on "order.api.created")
-log_info "Step 3: Verifying order status in Order-Core for order ID $ORDER_ID..."
-
-# Wait a bit for Order-Core to process the Kafka event (if step 2 was async check)
-# This is not ideal, better to have a retry loop or check for a specific condition.
-# If step 2 confirmed the event that Order-Core consumes, this wait might be shorter.
-# For now, let's assume some processing time.
-sleep 10
-
-# Order-Core's internal API might use the Order-API's orderId as a reference or its own.
-# Assuming Order-Core uses the same ID or has a way to correlate.
-# The InternalOrderController might need Keycloak auth (ORDER_ADMIN role).
-# This curl would also need an AUTH_TOKEN if security is enforced.
-CORE_RESPONSE=$(curl -s -X GET "${ORDER_CORE_INTERNAL_URL}/internal/orders/${ORDER_ID}")
-
-log_info "Order-Core response: $CORE_RESPONSE"
-
-# Example: Assuming Order-Core's GET /internal/orders/{id} returns a JSON with "currentStatus"
-# And that Order-Core's OrderService.createOrder (triggered by listener) sets initial status to CREATED.
-ORDER_STATUS=$(echo "$CORE_RESPONSE" | jq -r '.currentStatus // .status // ""') # Try common status fields
-
-if [ "$ORDER_STATUS" == "CREATED" ]; then
-  log_info "Order status in Order-Core is CREATED as expected for order ID $ORDER_ID."
-else
-  log_error "Order status in Order-Core is '$ORDER_STATUS', expected 'CREATED' for order ID $ORDER_ID."
-  # Consider querying outbox or other logs from Order-Core if available via an endpoint for diagnostics.
+if [ "$RECEIVED_ORDER_ID_PAY_SUCC" != "$ORDER_ID" ]; then
+  log_error "Mismatch in Order ID on '$TOPIC_ORDER_PAYMENT_SUCCEEDED'. Expected: $ORDER_ID, Got: $RECEIVED_ORDER_ID_PAY_SUCC"
   exit 1
 fi
+if [ -z "$RAZORPAY_PAYMENT_ID" ] || [ "$RAZORPAY_PAYMENT_ID" == "null" ]; then
+  log_error "Missing Razorpay Payment ID on '$TOPIC_ORDER_PAYMENT_SUCCEEDED' event."
+  exit 1
+fi
+log_info "  ✅ '$TOPIC_ORDER_PAYMENT_SUCCEEDED' event verified. Order ID: $ORDER_ID, Razorpay Payment ID: $RAZORPAY_PAYMENT_ID"
 
-# After testing order/reservation:
-curl -s http://${INVENTORY_SERVICE_HOST}/inventory/SMOKE-SKU | jq .
 
-log_info "Smoke test completed successfully!"
+# 3. Await vendor.payout.initiated event
+log_info "➡️ Step 3: Awaiting '$TOPIC_VENDOR_PAYOUT_INITIATED' event..."
+PAYOUT_INITIATED_EVENT_JSON=$(consume_kafka_message "$TOPIC_VENDOR_PAYOUT_INITIATED")
+if [ $? -ne 0 ]; then exit 1; fi
+
+log_info "  Received from $TOPIC_VENDOR_PAYOUT_INITIATED: $PAYOUT_INITIATED_EVENT_JSON"
+INITIATED_PAYOUT_ID=$(echo "$PAYOUT_INITIATED_EVENT_JSON" | jq -r '.payoutId')
+# This paymentId in VendorPayoutInitiatedEvent should be our internal PaymentTransaction ID.
+# We don't easily get this ID from previous steps without an API query.
+# For smoke test, we'll just check for presence of payoutId.
+if [ -z "$INITIATED_PAYOUT_ID" ] || [ "$INITIATED_PAYOUT_ID" == "null" ]; then
+  log_error "Missing Payout ID on '$TOPIC_VENDOR_PAYOUT_INITIATED' event."
+  exit 1
+fi
+log_info "  ✅ '$TOPIC_VENDOR_PAYOUT_INITIATED' event verified. Payout ID: $INITIATED_PAYOUT_ID"
+
+
+# 4. Await vendor.payout.succeeded event
+log_info "➡️ Step 4: Awaiting '$TOPIC_VENDOR_PAYOUT_SUCCEEDED' event for Payout ID $INITIATED_PAYOUT_ID..."
+PAYOUT_SUCCEEDED_EVENT_JSON=$(consume_kafka_message "$TOPIC_VENDOR_PAYOUT_SUCCEEDED")
+if [ $? -ne 0 ]; then exit 1; fi
+
+log_info "  Received from $TOPIC_VENDOR_PAYOUT_SUCCEEDED: $PAYOUT_SUCCEEDED_EVENT_JSON"
+RECEIVED_PAYOUT_ID_PAY_SUCC=$(echo "$PAYOUT_SUCCEEDED_EVENT_JSON" | jq -r '.payoutId')
+RAZORPAY_PAYOUT_ID=$(echo "$PAYOUT_SUCCEEDED_EVENT_JSON" | jq -r '.razorpayPayoutId')
+
+if [ "$RECEIVED_PAYOUT_ID_PAY_SUCC" != "$INITIATED_PAYOUT_ID" ]; then
+  log_error "Mismatch in Payout ID on '$TOPIC_VENDOR_PAYOUT_SUCCEEDED'. Expected: $INITIATED_PAYOUT_ID, Got: $RECEIVED_PAYOUT_ID_PAY_SUCC"
+  exit 1
+fi
+if [ -z "$RAZORPAY_PAYOUT_ID" ] || [ "$RAZORPAY_PAYOUT_ID" == "null" ]; then
+  log_error "Missing Razorpay Payout ID on '$TOPIC_VENDOR_PAYOUT_SUCCEEDED' event."
+  exit 1
+fi
+log_info "  ✅ '$TOPIC_VENDOR_PAYOUT_SUCCEEDED' event verified. Payout ID: $INITIATED_PAYOUT_ID, Razorpay Payout ID: $RAZORPAY_PAYOUT_ID"
+
+
+# 5. Verify Payment Service Health
+log_info "➡️ Step 5: Verifying Payment Service health (${PAYMENT_API_URL}/actuator/health)..."
+PAYMENT_HEALTH_RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${PAYMENT_API_URL}/actuator/health")
+
+if [ "$PAYMENT_HEALTH_RESPONSE_CODE" -eq 200 ]; then
+    log_info "  ✅ Payment Service is healthy (HTTP 200)."
+else
+    log_error "Payment Service is unhealthy. Health endpoint returned HTTP $PAYMENT_HEALTH_RESPONSE_CODE."
+    exit 1
+fi
+
+# --- Final Check & Exit ---
+log_info "🎉 Smoke test for Payment & Payout flow completed successfully!"
 exit 0

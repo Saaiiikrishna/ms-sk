@@ -9,6 +9,13 @@ import com.razorpay.Order;
 import com.razorpay.Payment;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
+import io.micrometer.core.annotation.Counted; // For @Counted
+import io.micrometer.core.annotation.Timed;   // For @Timed
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+// Timer class no longer needed if all timers are via @Timed
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
@@ -21,7 +28,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
+// @RequiredArgsConstructor // Cannot use with manual constructor for metrics
 @Transactional // Apply to all public methods by default
 @Slf4j
 public class PaymentServiceImpl implements PaymentService {
@@ -29,7 +36,37 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository paymentRepository;
     private final OutboxEventService outboxEventService;
     private final RazorpayClient razorpayClient;
-    private final VendorPayoutService vendorPayoutService; // Added VendorPayoutService
+    private final VendorPayoutService vendorPayoutService;
+    private final MeterRegistry meterRegistry;
+
+    // Metrics
+    // Metrics
+    private final Counter paymentSuccessTotal; // Programmatic remains for conditional increment
+    private final Counter paymentFailureTotal; // Programmatic remains for conditional increment
+    // @Counted for payment.service.requests.total will be on processPaymentRequest method
+    // @Timed for Razorpay calls will be on helper methods
+
+    public PaymentServiceImpl(PaymentRepository paymentRepository,
+                              OutboxEventService outboxEventService,
+                              RazorpayClient razorpayClient,
+                              VendorPayoutService vendorPayoutService,
+                              MeterRegistry meterRegistry) {
+        this.paymentRepository = paymentRepository;
+        this.outboxEventService = outboxEventService;
+        this.razorpayClient = razorpayClient;
+        this.vendorPayoutService = vendorPayoutService;
+        this.meterRegistry = meterRegistry; // Keep for programmatic counters
+
+        // Initialize Metrics that remain programmatic
+        this.paymentSuccessTotal = Counter.builder("payment.service.success.total")
+                .description("Total number of successful payment transactions")
+                .tags("type", "capture")
+                .register(meterRegistry);
+        this.paymentFailureTotal = Counter.builder("payment.service.failure.total")
+                .description("Total number of failed payment transactions")
+                .tags("type", "capture")
+                .register(meterRegistry);
+    }
 
     @Value("${kafka.topics.paymentSucceeded}")
     private String paymentSucceededTopic;
@@ -38,6 +75,10 @@ public class PaymentServiceImpl implements PaymentService {
     private String paymentFailedTopic;
 
     @Override
+    // User sketch suggests @Timed("payment.process.time") and @Counted("payment.process.count") here.
+    // My current @Counted is "payment.service.requests.total". I'll align with user sketch name.
+    @Timed(value = "payment.process.time", description = "Time to process customer payment")
+    @Counted(value = "payment.process.count", description = "Total customer payments processed")
     public void processPaymentRequest(PaymentRequestedEvent event) {
         log.info("Processing payment request for order ID: {}, Amount: {} {}",
                 event.getOrderId(), event.getAmount(), event.getCurrency());
@@ -118,20 +159,24 @@ public class PaymentServiceImpl implements PaymentService {
             // THIS IS A MOCK/SIMULATION for the synchronous capture part.
             // A real implementation relies on webhooks or client-side returning payment_id.
 
-            List<Payment> payments = razorpayClient.Orders.fetchPayments(razorpayOrderId);
+            // Calls to helper methods that are resilience-enabled
+            Order rpOrder = callRazorpayCreateOrder(orderRequest);
+            razorpayOrderId = rpOrder.get("id");
+            transaction.setRazorpayOrderId(razorpayOrderId);
+            log.info("Razorpay Order created: ID = {} for our Order ID = {}", razorpayOrderId, event.getOrderId());
+
+            List<Payment> payments = callRazorpayFetchPayments(razorpayOrderId);
             if (!payments.isEmpty()) {
-                Payment firstPayment = payments.get(0); // Assuming the first one is relevant
+                Payment firstPayment = payments.get(0);
                 if ("captured".equalsIgnoreCase(firstPayment.get("status")) || "authorized".equalsIgnoreCase(firstPayment.get("status"))) {
-                     // If already captured (e.g. payment_capture=1) or authorized and needs capture
                     if ("authorized".equalsIgnoreCase(firstPayment.get("status"))) {
-                        // Explicitly capture if it was only authorized
-                        JSONObject captureRequest = new JSONObject();
-                        captureRequest.put("amount", amountInPaise); // Amount in paise
-                        captureRequest.put("currency", event.getCurrency());
-                        firstPayment = razorpayClient.Payments.capture(firstPayment.get("id"),captureRequest); // Capture the authorized payment
+                        JSONObject capturePaymentRequest = new JSONObject();
+                        capturePaymentRequest.put("amount", amountInPaise);
+                        capturePaymentRequest.put("currency", event.getCurrency());
+                        firstPayment = callRazorpayCapturePayment(firstPayment.get("id"), capturePaymentRequest);
                     }
                     razorpayPaymentId = firstPayment.get("id");
-                    paymentStatus = "SUCCEEDED"; // Or "CAPTURED"
+                    paymentStatus = "SUCCEEDED";
                     transaction.setRazorpayPaymentId(razorpayPaymentId);
                     transaction.setStatus(paymentStatus);
                     log.info("Payment captured/verified for Razorpay Order ID {}: Payment ID = {}", razorpayOrderId, razorpayPaymentId);
@@ -159,6 +204,7 @@ public class PaymentServiceImpl implements PaymentService {
                            "paymentId", razorpayPaymentId, // Razorpay's payment ID
                            "transactionTimestamp", System.currentTimeMillis())
             );
+            paymentSuccessTotal.increment(); // Increment success counter
             log.info("Payment succeeded for Order ID {}. Published to outbox.", event.getOrderId());
 
             // After successful customer payment, initiate vendor payout
@@ -188,6 +234,7 @@ public class PaymentServiceImpl implements PaymentService {
                            "reason", e.getMessage(),
                            "transactionTimestamp", System.currentTimeMillis())
             );
+            paymentFailureTotal.increment(); // Increment failure counter
             log.warn("Payment failed for Order ID {}. Published failure to outbox.", event.getOrderId());
         } catch (Exception e) { // Catch other unexpected errors
             log.error("Unexpected exception during payment processing for Order ID {}: {}", event.getOrderId(), e.getMessage(), e);
@@ -203,7 +250,8 @@ public class PaymentServiceImpl implements PaymentService {
                            "reason", "Unexpected processing error: " + e.getMessage(),
                            "transactionTimestamp", System.currentTimeMillis())
             );
-             log.warn("Payment failed due to unexpected error for Order ID {}. Published failure to outbox.", event.getOrderId());
+            paymentFailureTotal.increment(); // Increment failure counter for unexpected errors too
+            log.warn("Payment failed due to unexpected error for Order ID {}. Published failure to outbox.", event.getOrderId());
         }
     }
 
@@ -252,5 +300,55 @@ public class PaymentServiceImpl implements PaymentService {
             return UUID.fromString("00000000-0000-0000-0000-000000000001"); // Example vendor UUID
         }
         return null; // Simulate vendor not found or not applicable
+    }
+
+    // --- Resilience4j Helper Methods & Fallbacks for Razorpay API calls ---
+
+import io.micrometer.core.annotation.Timed; // Import @Timed
+
+// ... (other imports)
+
+// --- Resilience4j Helper Methods & Fallbacks for Razorpay API calls ---
+    @Timed(value = "payment.service.razorpay.orders.create.timer", description = "Timer for Razorpay Order create API calls", percentiles = {0.5, 0.95, 0.99})
+    @CircuitBreaker(name = "razorpayOrdersApi", fallbackMethod = "createOrderFallback")
+    @Retry(name = "razorpayApiRetry")
+    protected Order callRazorpayCreateOrder(JSONObject orderRequest) throws RazorpayException {
+        log.debug("Calling RazorpayClient.Orders.create: {}", orderRequest.toString());
+        // return razorpayOrderCreateTimer.recordCallable(() -> razorpayClient.Orders.create(orderRequest)); // Removed programmatic timer
+        return razorpayClient.Orders.create(orderRequest);
+    }
+
+    protected Order createOrderFallback(JSONObject orderRequest, Throwable t) throws RazorpayException {
+        log.warn("Fallback for callRazorpayCreateOrder due to: {}. Request: {}", t.getMessage(), orderRequest.toString());
+        // Re-throw as RazorpayException to be caught by the main try-catch block in processPaymentRequest
+        if (t instanceof RazorpayException) throw (RazorpayException) t;
+        throw new RazorpayException("Razorpay Orders.create call failed and fallback triggered: " + t.getMessage());
+    }
+
+    @CircuitBreaker(name = "razorpayOrdersApi", fallbackMethod = "fetchPaymentsFallback") // Can use same CB for all Order API calls
+    @Retry(name = "razorpayApiRetry")
+    protected List<Payment> callRazorpayFetchPayments(String razorpayOrderId) throws RazorpayException {
+        log.debug("Calling RazorpayClient.Orders.fetchPayments for order ID: {}", razorpayOrderId);
+        return razorpayPaymentsFetchTimer.recordCallable(() -> razorpayClient.Orders.fetchPayments(razorpayOrderId));
+    }
+
+    protected List<Payment> fetchPaymentsFallback(String razorpayOrderId, Throwable t) throws RazorpayException {
+        log.warn("Fallback for callRazorpayFetchPayments for order ID {} due to: {}", razorpayOrderId, t.getMessage());
+        if (t instanceof RazorpayException) throw (RazorpayException) t;
+        throw new RazorpayException("Razorpay Orders.fetchPayments call failed and fallback triggered: " + t.getMessage());
+    }
+
+    @CircuitBreaker(name = "razorpayPaymentsApi", fallbackMethod = "capturePaymentFallback")
+    @Retry(name = "razorpayApiRetry")
+    protected Payment callRazorpayCapturePayment(String paymentId, JSONObject captureRequest) throws RazorpayException {
+        log.debug("Calling RazorpayClient.Payments.capture for payment ID {}: {}", paymentId, captureRequest.toString());
+        return razorpayPaymentCaptureTimer.recordCallable(() -> razorpayClient.Payments.capture(paymentId, captureRequest));
+    }
+
+    protected Payment capturePaymentFallback(String paymentId, JSONObject captureRequest, Throwable t) throws RazorpayException {
+        log.warn("Fallback for callRazorpayCapturePayment for payment ID {} due to: {}. Request: {}",
+                paymentId, t.getMessage(), captureRequest.toString());
+        if (t instanceof RazorpayException) throw (RazorpayException) t;
+        throw new RazorpayException("Razorpay Payments.capture call failed and fallback triggered: " + t.getMessage());
     }
 }
