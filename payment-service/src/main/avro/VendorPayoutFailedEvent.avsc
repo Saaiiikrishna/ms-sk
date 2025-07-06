@@ -1,0 +1,15 @@
+{
+  "namespace":"com.mysillydreams.payment.dto",
+  "type":"record",
+  "name":"VendorPayoutFailedEvent",
+  "fields":[
+    {"name":"payoutId","type":"string"},
+    {"name":"paymentId","type":"string"},
+    {"name":"vendorId","type":"string"},
+    {"name":"netAmount","type":"double"},
+    {"name":"currency","type":"string"},
+    {"name":"errorCode","type":["null", "string"], "default": null},
+    {"name":"errorMessage","type":"string"},  微调，将 errorMsg 改为 errorMessage
+    {"name":"failedAt","type":{"type":"long","logicalType":"timestamp-millis"}}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "namespace": "com.mysillydreams.payment.dto",
+  "type": "record",
+  "name": "RefundSucceededEvent",
+  "fields": [
+    { "name": "refundId", "type": "string" }, // Corresponds to the ID in RefundRequestedEvent
+    { "name": "paymentId", "type": "string" }, // Original Payment ID
+    { "name": "orderId", "type": "string" }, // Original Order ID
+    { "name": "razorpayRefundId", "type": "string" }, // ID of the refund transaction from Razorpay
+    { "name": "amountRefunded", "type": "double" },
+    { "name": "currency", "type": "string" },
+    { "name": "status", "type": "string" }, // e.g., "processed", "completed"
+    { "name": "processedTimestamp", "type": { "type": "long", "logicalType": "timestamp-millis" }}
+  ]
+}

@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: payment-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:paymentdb} # Default DB name changed
+    username: ${DB_USER:paymentuser}
+    password: ${DB_PASS:paymentpass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false # Keep false unless debugging
+    show-sql: false
+
+flyway:
+  enabled: true
+  baseline-on-migrate: true
+
+kafka:
+  bootstrap-servers: ${KAFKA_BROKER:localhost:9092}
+  consumer:
+    group-id: payment-service-group # Changed group-id
+    key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    value-deserializer: io.confluent.kafka.serializers.KafkaAvroDeserializer
+    properties:
+      specific.avro.reader: true
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+      # auto.offset.reset: earliest # Or latest, depending on requirements
+    enable-auto-commit: false # Manual ack in listener
+  producer:
+    key-serializer: org.apache.kafka.common.serialization.StringSerializer
+    value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+    properties:
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+      # acks: all # For better durability
+  topics:
+    paymentRequested: order.payment.requested # Consumed by this service
+    paymentSucceeded: order.payment.succeeded # Produced by this service
+    paymentFailed: order.payment.failed     # Produced by this service
+    refundRequested: order.refund.requested   # Consumed by this service (if handling refunds)
+    refundSucceeded: order.refund.succeeded # Produced by this service (if handling refunds)
+    # Vendor Payout Topics
+    vendorPayoutInitiated: vendor.payout.initiated
+    vendorPayoutSucceeded: vendor.payout.succeeded
+    vendorPayoutFailed:    vendor.payout.failed
+    # Webhook related events might also be published to internal topics if needed
+    # e.g., razorpay.payment.authorized, razorpay.payment.failed
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+      # Consider specific health indicators for Razorpay connectivity, DB, Kafka
+
+# Keycloak (if webhook or other endpoints need security)
+# keycloak:
+#   enabled: true # False by default if not immediately needed
+#   realm: ${KEYCLOAK_REALM:myrealm}
+#   auth-server-url: ${KEYCLOAK_URL:http://localhost:8080}/auth
+#   resource: ${KEYCLOAK_CLIENT_ID:payment-service-client}
+#   credentials:
+#     secret: ${KEYCLOAK_CLIENT_SECRET:} # From environment or K8s secret
+
+server:
+  port: 8083 # Different port for payment-service
+
+logging:
+  level:
+    root: INFO
+    com.mysillydreams.payment: DEBUG # Changed package name
+    org.springframework.kafka: INFO
+    com.razorpay: INFO # Razorpay SDK logging level
+
+# Payment Service specific properties
+payment:
+  outbox:
+    poll:
+      delay: ${PAYMENT_OUTBOX_POLL_DELAY:5000} # ms, make configurable via env
+      initialDelay: ${PAYMENT_OUTBOX_POLL_INITIALDELAY:10000} # ms
+  # Razorpay Configuration - these will be primary source if @Value uses them
+  razorpay:
+    key-id: ${RAZORPAY_KEY_ID} # Mandatory: Get from environment or K8s secret
+    key-secret: ${RAZORPAY_KEY_SECRET} # Mandatory: Get from environment or K8s secret
+    webhook:
+      secret: ${RAZORPAY_WEBHOOK_SECRET} # Mandatory for webhook validation
+      # enabled: true # If webhooks are actively used
+    payout:
+      account-id: ${RAZORPAY_X_ACCOUNT_ID} # Mandatory: Your RazorpayX account ID from which payouts are made
+  commission:
+    percent: ${APP_COMMISSION_PERCENT:10.0} # Default to 10%, configurable via env var
+
+# Resilience4j circuit breaker example config (if used)
+# resilience4j.circuitbreaker:
+#   instances:
+#     razorpayApi:
+#       registerHealthIndicator: true
+#       slidingWindowSize: 10
+#       minimumNumberOfCalls: 5
+#       permittedNumberOfCallsInHalfOpenState: 3
+#       automaticTransitionFromOpenToHalfOpenEnabled: true
+#       waitDurationInOpenState: 5s
+#       failureRateThreshold: 50
+#       eventConsumerBufferSize: 10
+#       ignoreExceptions:
+#         - com.razorpay.BadRequestException # Example: Don't open circuit for client errors
+# resilience4j.retry:
+#   instances:
+#     razorpayApi:
+#       maxAttempts: 3
+#       waitDuration: 100ms
+#       retryExceptions:
+#         - java.io.IOException
+#         - com.razorpay.RazorpayException # More specific exceptions to retry on
+#       ignoreExceptions:
+#         - com.razorpay.BadRequestException
+# resilience4j.timelimiter:
+#   instances:
+#     razorpayApi:
+#       timeoutDuration: 2s
+#       cancelRunningFuture: true

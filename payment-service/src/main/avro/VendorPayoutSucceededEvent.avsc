@@ -1,0 +1,14 @@
+{
+  "namespace":"com.mysillydreams.payment.dto",
+  "type":"record",
+  "name":"VendorPayoutSucceededEvent",
+  "fields":[
+    {"name":"payoutId","type":"string"},
+    {"name":"paymentId","type":"string"},
+    {"name":"vendorId","type":"string"},
+    {"name":"razorpayPayoutId","type":"string"},
+    {"name":"netAmount","type":"double"},
+    {"name":"currency","type":"string"},
+    {"name":"processedAt","type":{"type":"long","logicalType":"timestamp-millis"}}
+  ]
+}
