@@ -139,6 +139,22 @@ class DynamicPricingRuleServiceTest {
     }
 
     @Test
+    void createRule_missingPercentOffParam_throwsIllegalArgumentException() {
+        Map<String, Object> params = new HashMap<>();
+        CreateDynamicPricingRuleRequest request = CreateDynamicPricingRuleRequest.builder()
+                .itemId(catalogItemId)
+                .ruleType("PERCENT_OFF")
+                .parameters(params)
+                .enabled(true)
+                .build();
+
+        when(itemRepository.findById(catalogItemId)).thenReturn(Optional.of(catalogItem));
+
+        assertThrows(IllegalArgumentException.class, () -> dynamicPricingRuleService.createRule(request, "user"));
+        verify(ruleRepository, never()).save(any());
+    }
+
+    @Test
     void updateRule_whenRuleExists_shouldUpdateAndSaveOutboxEvent() {
         // Arrange
         Map<String, Object> updatedParams = new HashMap<>();
@@ -189,6 +205,22 @@ class DynamicPricingRuleServiceTest {
         assertThrows(ResourceNotFoundException.class, () -> dynamicPricingRuleService.updateRule(ruleId, request, "user"));
         verify(ruleRepository, never()).save(any());
         verify(outboxEventService, never()).saveOutboxEvent(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void updateRule_invalidParameters_shouldThrowIllegalArgumentException() {
+        Map<String, Object> invalid = new HashMap<>();
+        UpdateDynamicPricingRuleRequest request = UpdateDynamicPricingRuleRequest.builder()
+                .itemId(catalogItemId)
+                .ruleType(ruleEntity.getRuleType())
+                .parameters(invalid)
+                .enabled(true)
+                .build();
+
+        when(ruleRepository.findById(ruleId)).thenReturn(Optional.of(ruleEntity));
+
+        assertThrows(IllegalArgumentException.class, () -> dynamicPricingRuleService.updateRule(ruleId, request, "user"));
+        verify(ruleRepository, never()).save(any());
     }
 
     @Test
