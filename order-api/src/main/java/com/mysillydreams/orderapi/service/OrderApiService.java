@@ -1,9 +1,14 @@
 package com.mysillydreams.orderapi.service;
 
+// Import existing DTOs for request and internal use
 import com.mysillydreams.orderapi.dto.CreateOrderRequest;
 import com.mysillydreams.orderapi.dto.LineItemDto;
-import com.mysillydreams.orderapi.dto.OrderCancelledEvent;
-import com.mysillydreams.orderapi.dto.OrderCreatedEvent;
+
+// Import Avro generated classes for Kafka events
+import com.mysillydreams.orderapi.dto.avro.OrderCancelledEvent as AvroOrderCancelledEvent;
+import com.mysillydreams.orderapi.dto.avro.OrderCreatedEvent as AvroOrderCreatedEvent;
+import com.mysillydreams.orderapi.dto.avro.LineItem as AvroLineItem;
+
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.tracing.annotation.NewSpan;
@@ -49,19 +54,28 @@ public class OrderApiService {
     // MDC.put("customerId", req.getCustomerId().toString()); // Already set in controller
     MDC.put("orderId", orderId.toString());
 
-
     BigDecimal totalAmount = calculateTotal(req.getItems());
 
-    OrderCreatedEvent event = new OrderCreatedEvent(
-        orderId,
-        req.getCustomerId(),
-        req.getItems(),
-        totalAmount,
-        req.getCurrency(),
-        Instant.now()
-    );
+    // Map DTO LineItems to Avro LineItems
+    List<AvroLineItem> avroItems = req.getItems().stream()
+        .map(dtoItem -> AvroLineItem.newBuilder()
+            .setProductId(dtoItem.getProductId().toString()) // Assuming productId in Avro is String
+            .setQuantity(dtoItem.getQuantity())
+            .setPrice(dtoItem.getPrice().doubleValue()) // Assuming price in Avro is double
+            .build())
+        .collect(Collectors.toList());
 
-    publisher.publishOrderCreated(event); // publishOrderCreated will have its own span
+    // Create Avro OrderCreatedEvent
+    AvroOrderCreatedEvent avroEvent = AvroOrderCreatedEvent.newBuilder()
+        .setOrderId(orderId.toString())
+        .setCustomerId(req.getCustomerId().toString())
+        .setItems(avroItems)
+        .setTotalAmount(totalAmount.doubleValue()) // Assuming totalAmount in Avro is double
+        .setCurrency(req.getCurrency())
+        .setCreatedAt(Instant.now().toEpochMilli())
+        .build();
+
+    publisher.publishOrderCreated(avroEvent); // Pass Avro event to publisher
     log.info("Order creation process initiated"); // orderId, customerId, idempotencyKey from MDC
 
     // Clean up MDC specific to this method call if it was set here.
@@ -77,17 +91,18 @@ public class OrderApiService {
     // Assuming orderId and customerId (if applicable) are in MDC from controller
     // MDC.put("orderId", orderId.toString()); // Already set in controller for this request
 
-    OrderCancelledEvent event = new OrderCancelledEvent(
-        orderId,
-        reason,
-        Instant.now()
-    );
+    AvroOrderCancelledEvent avroEvent = AvroOrderCancelledEvent.newBuilder()
+        .setOrderId(orderId.toString())
+        .setReason(reason)
+        .setCancelledAt(Instant.now().toEpochMilli())
+        .build();
 
-    publisher.publishOrderCancelled(event); // publishOrderCancelled will have its own span
+    publisher.publishOrderCancelled(avroEvent); // Pass Avro event to publisher
     log.info("Order cancellation process initiated"); // orderId from MDC
   }
 
   // Helper method to calculate total amount from line items
+  // This method still works with List<LineItemDto> from the CreateOrderRequest
   // No @NewSpan needed for private helper methods unless they are complex and warrant a separate span
   private BigDecimal calculateTotal(List<LineItemDto> items) {
     if (items == null || items.isEmpty()) {

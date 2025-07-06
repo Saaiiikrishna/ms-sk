@@ -1,7 +1,8 @@
 package com.mysillydreams.orderapi.service;
 
-import com.mysillydreams.orderapi.dto.OrderCancelledEvent;
-import com.mysillydreams.orderapi.dto.OrderCreatedEvent;
+// Import Avro generated classes
+import com.mysillydreams.orderapi.dto.avro.OrderCancelledEvent as AvroOrderCancelledEvent;
+import com.mysillydreams.orderapi.dto.avro.OrderCreatedEvent as AvroOrderCreatedEvent;
 import io.micrometer.tracing.annotation.NewSpan;
 import io.micrometer.tracing.annotation.SpanTag;
 import lombok.RequiredArgsConstructor;
@@ -25,59 +26,66 @@ public class KafkaOrderPublisher {
 
   @Value("${kafka.topics.orderCreated}")
   private String orderCreatedTopic;
+  @Value("${kafka.topics.orderCreatedDlq}")
+  private String orderCreatedDlqTopic;
 
   @Value("${kafka.topics.orderCancelled}")
   private String orderCancelledTopic;
+  @Value("${kafka.topics.orderCancelledDlq}")
+  private String orderCancelledDlqTopic;
 
   @NewSpan("kafka.publisher.orderCreated")
-  public void publishOrderCreated(@SpanTag("event.orderId") OrderCreatedEvent event) {
-    // MDC values (orderId, customerId, idempotencyKey) should propagate from the calling service/controller context
-    // or be explicitly set if this is a new root span context for some reason.
-    // For logging within this method, ensure critical IDs are present.
-    // If orderId is not in MDC yet, this is a good place to ensure it is for the log lines here.
-    // String orderIdStr = event.getOrderId().toString();
-    // MDC.put("kafkaTopic", orderCreatedTopic); // Add topic to MDC for these logs
+  public void publishOrderCreated(@SpanTag("event.orderId") AvroOrderCreatedEvent avroEvent) { // Changed to Avro type
+    // The eventId for Avro is already a String as per schema (orderId: "string")
+    String eventId = avroEvent.getOrderId();
+    log.info("Publishing Avro OrderCreatedEvent for orderId: {} to topic: {}", eventId, orderCreatedTopic);
 
-    log.info("Publishing OrderCreatedEvent to topic: {}", orderCreatedTopic); // orderId, etc., from MDC
     ListenableFuture<SendResult<String, Object>> future =
-        kafkaTemplate.send(orderCreatedTopic, event.getOrderId().toString(), event);
+        kafkaTemplate.send(orderCreatedTopic, eventId, avroEvent); // Send Avro object
 
-    future.addCallback(new ListenableFutureCallback<SendResult<String, Object>>() {
-      @Override
-      public void onSuccess(SendResult<String, Object> result) {
-        log.info("Successfully sent OrderCreatedEvent with offset: {}",
-            result.getRecordMetadata().offset()); // orderId from MDC
+    future.addCallback(
+      successResult -> {
+        log.info("Successfully sent Avro OrderCreatedEvent for orderId: {} with offset: {}",
+            eventId, successResult.getRecordMetadata().offset());
+      },
+      failureException -> {
+        log.error("Failed to send Avro OrderCreatedEvent for orderId: {} to topic {}. Error: {}. Sending to DLQ topic {}.",
+            eventId, orderCreatedTopic, failureException.getMessage(), orderCreatedDlqTopic, failureException);
+        // Send to DLQ
+        kafkaTemplate.send(orderCreatedDlqTopic, eventId, avroEvent) // Send Avro object to DLQ
+          .addCallback(dlqSuccess -> log.info("Successfully sent Avro OrderCreatedEvent for orderId: {} to DLQ topic {} with offset: {}",
+                                                eventId, orderCreatedDlqTopic, dlqSuccess.getRecordMetadata().offset()),
+                       dlqFailure -> log.error("Failed to send Avro OrderCreatedEvent for orderId: {} to DLQ topic {}. Error: {}",
+                                                eventId, orderCreatedDlqTopic, dlqFailure.getMessage(), dlqFailure)
+          );
       }
-
-      @Override
-      public void onFailure(Throwable ex) {
-        log.error("Failed to send OrderCreatedEvent due to: {}", ex.getMessage(), ex); // orderId from MDC
-        // Consider retry mechanisms or dead-letter queue (DLQ) handling here
-      }
-    });
-    // MDC.remove("kafkaTopic");
+    );
   }
 
   @NewSpan("kafka.publisher.orderCancelled")
-  public void publishOrderCancelled(@SpanTag("event.orderId") OrderCancelledEvent event) {
-    // MDC.put("kafkaTopic", orderCancelledTopic);
-    log.info("Publishing OrderCancelledEvent to topic: {}", orderCancelledTopic); // orderId from MDC
+  public void publishOrderCancelled(@SpanTag("event.orderId") AvroOrderCancelledEvent avroEvent) { // Changed to Avro type
+    String eventId = avroEvent.getOrderId();
+    log.info("Publishing Avro OrderCancelledEvent for orderId: {} to topic: {}", eventId, orderCancelledTopic);
+
     ListenableFuture<SendResult<String, Object>> future =
-        kafkaTemplate.send(orderCancelledTopic, event.getOrderId().toString(), event);
+        kafkaTemplate.send(orderCancelledTopic, eventId, avroEvent); // Send Avro object
 
-    future.addCallback(new ListenableFutureCallback<SendResult<String, Object>>() {
-      @Override
-      public void onSuccess(SendResult<String, Object> result) {
-        log.info("Successfully sent OrderCancelledEvent with offset: {}",
-             result.getRecordMetadata().offset()); // orderId from MDC
+    future.addCallback(
+      successResult -> {
+        log.info("Successfully sent Avro OrderCancelledEvent for orderId: {} with offset: {}",
+            eventId, successResult.getRecordMetadata().offset());
+      },
+      failureException -> {
+        log.error("Failed to send Avro OrderCancelledEvent for orderId: {} to topic {}. Error: {}. Sending to DLQ topic {}.",
+            eventId, orderCancelledTopic, failureException.getMessage(), orderCancelledDlqTopic, failureException);
+        // Send to DLQ
+        kafkaTemplate.send(orderCancelledDlqTopic, eventId, avroEvent) // Send Avro object to DLQ
+          .addCallback(dlqSuccess -> log.info("Successfully sent Avro OrderCancelledEvent for orderId: {} to DLQ topic {} with offset: {}",
+                                                eventId, orderCancelledDlqTopic, dlqSuccess.getRecordMetadata().offset()),
+                       dlqFailure -> log.error("Failed to send Avro OrderCancelledEvent for orderId: {} to DLQ topic {}. Error: {}",
+                                                eventId, orderCancelledDlqTopic, dlqFailure.getMessage(), dlqFailure)
+          );
       }
-
-      @Override
-      public void onFailure(Throwable ex) {
-        log.error("Failed to send OrderCancelledEvent due to: {}", ex.getMessage(), ex); // orderId from MDC
-        // Consider retry mechanisms or DLQ handling here
-      }
-    });
-    // MDC.remove("kafkaTopic");
+    );
   }
 }

@@ -21,16 +21,31 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
+import com.mysillydreams.orderapi.dto.ApiError;
+import com.mysillydreams.orderapi.exception.GlobalExceptionHandler; // Import to ensure it's on classpath for test context
+import org.springframework.context.annotation.Import;
+import org.springframework.kafka.KafkaException;
+
+import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import com.mysillydreams.orderapi.config.KeycloakConfig; // To satisfy WebMvcTest dependencies if security is active
+
 @WebMvcTest(OrderController.class)
-@ContextConfiguration(classes = OrderController.class) // Specify controller for context
+// Import GlobalExceptionHandler to make it active for this slice test.
+// Also import KeycloakConfig because WebMvcTest tries to load security configurations.
+// If KeycloakConfig is not imported, auto-configuration might fail or security might not be applied as expected.
+// However, for testing specific controller advice, sometimes disabling security entirely for the test slice is easier
+// if the advice itself isn't security-dependent. For now, let's import it.
+@Import({GlobalExceptionHandler.class, KeycloakConfig.class})
+// No need for @ContextConfiguration(classes = OrderController.class) when using @WebMvcTest(OrderController.class)
+// and importing necessary additional configs like GlobalExceptionHandler.
 class OrderControllerTest {
 
     @Autowired
@@ -151,5 +166,76 @@ class OrderControllerTest {
                         .with(jwt().jwt(j -> j.subject(customerId.toString()))) // No specific authorities/roles granted
                         .param("reason", reason))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createOrder_whenServiceThrowsKafkaException_shouldReturnServiceUnavailable() throws Exception {
+        when(orderApiService.createOrder(any(CreateOrderRequest.class), eq(idempotencyKey)))
+                .thenThrow(new KafkaException("Simulated Kafka is down"));
+
+        mockMvc.perform(post("/orders")
+                        .with(jwt().jwt(j -> j.subject(customerId.toString())).authorities(new SimpleGrantedAuthority("ROLE_USER")))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createOrderRequest)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status", is(503)))
+                .andExpect(jsonPath("$.error", is("KAFKA_ERROR")))
+                .andExpect(jsonPath("$.message", is("Error communicating with Kafka: Simulated Kafka is down")))
+                .andExpect(jsonPath("$.path", is("/orders")));
+    }
+
+    @Test
+    void createOrder_whenRequestBodyIsMalformed_shouldReturnBadRequest() throws Exception {
+        String malformedJson = "{\"items\":[{\"productId\":\"abc\",\"quantity\":1,\"price\":10.0}],\"currency\":\"USD\""; // Missing closing brace
+
+        mockMvc.perform(post("/orders")
+                        .with(jwt().jwt(j -> j.subject(customerId.toString())).authorities(new SimpleGrantedAuthority("ROLE_USER")))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(malformedJson))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status", is(400)))
+                .andExpect(jsonPath("$.error", is("MALFORMED_REQUEST")))
+                // Message for HttpMessageNotReadableException can be verbose and vary, so check for existence or partial match.
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.path", is("/orders")));
+    }
+
+    @Test
+    void createOrder_whenMissingIdempotencyKeyHeader_shouldReturnBadRequestFromHandler() throws Exception {
+        // This test now relies on the GlobalExceptionHandler for MissingRequestHeaderException
+        // The IdempotencyFilter also checks this, but if the filter was somehow bypassed or another controller
+        // required a header, this handler would catch it.
+        mockMvc.perform(post("/orders")
+                        .with(jwt().jwt(j -> j.subject(customerId.toString())).authorities(new SimpleGrantedAuthority("ROLE_USER")))
+                        // No "Idempotency-Key" header
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createOrderRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status", is(400)))
+                .andExpect(jsonPath("$.error", is("MISSING_HEADER"))) // This comes from our handler
+                .andExpect(jsonPath("$.message", is("Required request header 'Idempotency-Key' is not present.")));
+    }
+
+
+    @Test
+    void cancelOrder_whenServiceThrowsGenericException_shouldReturnInternalServerError() throws Exception {
+        UUID orderToCancel = UUID.randomUUID();
+        String reason = "Test reason";
+
+        doThrow(new RuntimeException("Unexpected internal error")).when(orderApiService).cancelOrder(orderToCancel, reason);
+
+        mockMvc.perform(put("/orders/{id}/cancel", orderToCancel)
+                        .with(jwt().jwt(j -> j.subject(customerId.toString())).authorities(new SimpleGrantedAuthority("ROLE_USER")))
+                        .param("reason", reason))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status", is(500)))
+                .andExpect(jsonPath("$.error", is("INTERNAL_SERVER_ERROR")))
+                .andExpect(jsonPath("$.message", is("An unexpected error occurred: Unexpected internal error")))
+                .andExpect(jsonPath("$.path", is("/orders/" + orderToCancel + "/cancel")));
     }
 }

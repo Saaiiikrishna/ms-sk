@@ -2,8 +2,10 @@ package com.mysillydreams.orderapi.service;
 
 import com.mysillydreams.orderapi.dto.CreateOrderRequest;
 import com.mysillydreams.orderapi.dto.LineItemDto;
-import com.mysillydreams.orderapi.dto.OrderCancelledEvent;
-import com.mysillydreams.orderapi.dto.OrderCreatedEvent;
+// Import Avro generated event classes
+import com.mysillydreams.orderapi.dto.avro.OrderCancelledEvent as AvroOrderCancelledEvent;
+import com.mysillydreams.orderapi.dto.avro.OrderCreatedEvent as AvroOrderCreatedEvent;
+import com.mysillydreams.orderapi.dto.avro.LineItem as AvroLineItem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -53,7 +55,7 @@ class OrderApiServiceTest {
     void createOrder_shouldPublishOrderCreatedEvent() {
         // Given
         String idempotencyKey = UUID.randomUUID().toString();
-        ArgumentCaptor<OrderCreatedEvent> eventCaptor = ArgumentCaptor.forClass(OrderCreatedEvent.class);
+        ArgumentCaptor<AvroOrderCreatedEvent> eventCaptor = ArgumentCaptor.forClass(AvroOrderCreatedEvent.class);
 
         // When
         UUID orderId = orderApiService.createOrder(createOrderRequest, idempotencyKey);
@@ -62,35 +64,40 @@ class OrderApiServiceTest {
         assertNotNull(orderId);
         verify(kafkaOrderPublisher, times(1)).publishOrderCreated(eventCaptor.capture());
 
-        OrderCreatedEvent publishedEvent = eventCaptor.getValue();
-        assertEquals(orderId, publishedEvent.getOrderId());
-        assertEquals(customerId, publishedEvent.getCustomerId());
+        AvroOrderCreatedEvent publishedEvent = eventCaptor.getValue();
+        assertEquals(orderId.toString(), publishedEvent.getOrderId());
+        assertEquals(customerId.toString(), publishedEvent.getCustomerId());
         assertEquals("USD", publishedEvent.getCurrency());
         assertEquals(1, publishedEvent.getItems().size());
-        assertEquals(productId, publishedEvent.getItems().get(0).getProductId());
-        assertEquals(2, publishedEvent.getItems().get(0).getQuantity());
-        assertEquals(BigDecimal.TEN, publishedEvent.getItems().get(0).getPrice());
-        assertEquals(new BigDecimal("20"), publishedEvent.getTotalAmount()); // 2 * 10
-        assertNotNull(publishedEvent.getCreatedAt());
+
+        AvroLineItem publishedItem = publishedEvent.getItems().get(0);
+        assertEquals(productId.toString(), publishedItem.getProductId());
+        assertEquals(2, publishedItem.getQuantity());
+        assertEquals(10.0, publishedItem.getPrice(), 0.001); // Compare doubles with delta
+
+        assertEquals(20.0, publishedEvent.getTotalAmount(), 0.001); // 2 * 10.0
+        assertNotNull(publishedEvent.getCreatedAt()); // This is now a long (epoch milli)
     }
 
     @Test
     void createOrder_withMultipleItems_calculatesCorrectTotal() {
         // Given
         String idempotencyKey = UUID.randomUUID().toString();
-        LineItemDto item1 = new LineItemDto(UUID.randomUUID(), 1, new BigDecimal("10.50"));
-        LineItemDto item2 = new LineItemDto(UUID.randomUUID(), 3, new BigDecimal("5.25"));
+        UUID product1Id = UUID.randomUUID();
+        UUID product2Id = UUID.randomUUID();
+        LineItemDto item1 = new LineItemDto(product1Id, 1, new BigDecimal("10.50"));
+        LineItemDto item2 = new LineItemDto(product2Id, 3, new BigDecimal("5.25"));
         createOrderRequest.setItems(List.of(item1, item2)); // total = 10.50 + (3 * 5.25) = 10.50 + 15.75 = 26.25
 
-        ArgumentCaptor<OrderCreatedEvent> eventCaptor = ArgumentCaptor.forClass(OrderCreatedEvent.class);
+        ArgumentCaptor<AvroOrderCreatedEvent> eventCaptor = ArgumentCaptor.forClass(AvroOrderCreatedEvent.class);
 
         // When
         orderApiService.createOrder(createOrderRequest, idempotencyKey);
 
         // Then
         verify(kafkaOrderPublisher).publishOrderCreated(eventCaptor.capture());
-        OrderCreatedEvent publishedEvent = eventCaptor.getValue();
-        assertEquals(new BigDecimal("26.25"), publishedEvent.getTotalAmount());
+        AvroOrderCreatedEvent publishedEvent = eventCaptor.getValue();
+        assertEquals(26.25, publishedEvent.getTotalAmount(), 0.001);
     }
 
     @Test
@@ -98,15 +105,15 @@ class OrderApiServiceTest {
         // Given
         String idempotencyKey = UUID.randomUUID().toString();
         createOrderRequest.setItems(Collections.emptyList());
-        ArgumentCaptor<OrderCreatedEvent> eventCaptor = ArgumentCaptor.forClass(OrderCreatedEvent.class);
+        ArgumentCaptor<AvroOrderCreatedEvent> eventCaptor = ArgumentCaptor.forClass(AvroOrderCreatedEvent.class);
 
         // When
         orderApiService.createOrder(createOrderRequest, idempotencyKey);
 
         // Then
         verify(kafkaOrderPublisher).publishOrderCreated(eventCaptor.capture());
-        OrderCreatedEvent publishedEvent = eventCaptor.getValue();
-        assertEquals(BigDecimal.ZERO, publishedEvent.getTotalAmount());
+        AvroOrderCreatedEvent publishedEvent = eventCaptor.getValue();
+        assertEquals(0.0, publishedEvent.getTotalAmount(), 0.001);
     }
 
 
@@ -115,7 +122,7 @@ class OrderApiServiceTest {
         // Given
         UUID orderIdToCancel = UUID.randomUUID();
         String reason = "Test cancellation";
-        ArgumentCaptor<OrderCancelledEvent> eventCaptor = ArgumentCaptor.forClass(OrderCancelledEvent.class);
+        ArgumentCaptor<AvroOrderCancelledEvent> eventCaptor = ArgumentCaptor.forClass(AvroOrderCancelledEvent.class);
 
         // When
         orderApiService.cancelOrder(orderIdToCancel, reason);
@@ -123,9 +130,9 @@ class OrderApiServiceTest {
         // Then
         verify(kafkaOrderPublisher, times(1)).publishOrderCancelled(eventCaptor.capture());
 
-        OrderCancelledEvent publishedEvent = eventCaptor.getValue();
-        assertEquals(orderIdToCancel, publishedEvent.getOrderId());
+        AvroOrderCancelledEvent publishedEvent = eventCaptor.getValue();
+        assertEquals(orderIdToCancel.toString(), publishedEvent.getOrderId());
         assertEquals(reason, publishedEvent.getReason());
-        assertNotNull(publishedEvent.getCancelledAt());
+        assertNotNull(publishedEvent.getCancelledAt()); // This is now a long (epoch milli)
     }
 }

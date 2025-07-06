@@ -242,4 +242,53 @@ public class OrderApiIntegrationTest {
 
     // TODO: Add test for /orders/{id}/cancel endpoint (publish OrderCancelledEvent)
     // This would require another Kafka consumer setup for the order.cancelled topic.
+
+    @Test
+    void whenRequestsExceedRateLimit_shouldReturnTooManyRequests() throws Exception {
+        // Assuming rate limit is 100 per minute from default config in RateLimitFilter
+        // For testing, it might be better to override these properties in application-test.yml
+        // to a much smaller value, e.g., 5 requests per second.
+        // Let's assume properties are set for a low limit for this test in application-test.yml
+        // app.ratelimit.capacity=5
+        // app.ratelimit.refill-tokens=5
+        // app.ratelimit.refill-duration-minutes=1 (or shorter like 10 seconds for faster test)
+
+        // To make this test reliable without changing main config, we'd need to:
+        // 1. Configure very low rate limits in application-test.yml for the filter.
+        // 2. Or, mock the Bucket in the RateLimitFilter (harder with TestRestTemplate).
+        // 3. Or, make RateLimitFilter's bucket available for modification in tests (not ideal).
+
+        // Let's assume application-test.yml is updated with low limits for this test.
+        // Example: capacity=3, refill-tokens=3, refill-duration-minutes=1
+        // (These values should be in application-test.yml for this test to pass quickly and reliably)
+
+        LineItemDto item = new LineItemDto(UUID.randomUUID(), 1, new BigDecimal("5.00"));
+        CreateOrderRequest request = new CreateOrderRequest(null, Collections.singletonList(item), "EUR");
+        String idempotencyKeyBase = UUID.randomUUID().toString();
+
+        int successCount = 0;
+        int rateLimitErrorCode = 429; // HttpStatus.TOO_MANY_REQUESTS.value()
+        int allowedRequests = 3; // Based on assumed test configuration (e.g., app.ratelimit.capacity=3 in application-test.yml)
+
+        for (int i = 0; i < allowedRequests + 2; i++) {
+            HttpEntity<String> entity = createHttpEntity(request, idempotencyKeyBase + "-" + i);
+            ResponseEntity<String> response = restTemplate.postForEntity(
+                "http://localhost:" + port + "/orders", entity, String.class);
+
+            if (response.getStatusCodeValue() == HttpStatus.ACCEPTED.value()) {
+                successCount++;
+            } else if (response.getStatusCodeValue() == rateLimitErrorCode) {
+                log.info("Rate limit hit at request #{}", i + 1);
+                // Once rate limit is hit, subsequent requests should also be rate limited for a while
+                // (until tokens are refilled)
+                assertThat(successCount).as("Number of successful requests before rate limit").isEqualTo(allowedRequests);
+                return; // Test passed
+            } else {
+                // Unexpected status
+                fail("Unexpected HTTP status " + response.getStatusCodeValue() + " at request #" + (i+1));
+            }
+        }
+        // If loop finishes, it means rate limit was not hit as expected.
+        fail("Rate limit was not triggered within " + (allowedRequests + 2) + " requests. Check rate limit configuration for tests.");
+    }
 }

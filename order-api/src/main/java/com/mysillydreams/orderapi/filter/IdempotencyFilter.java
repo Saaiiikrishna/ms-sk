@@ -7,7 +7,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -42,10 +41,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private final Counter idempotentMissesCounter;
     private final Counter missingIdempotencyKeyCounter;
 
-    public IdempotencyFilter(@Qualifier("inMemoryIdempotencyService") IdempotencyService idempotencyService,
+    // Inject the specific RedisIdempotencyService or the interface if only one impl is expected
+    public IdempotencyFilter(IdempotencyService idempotencyService, // Spring will inject RedisIdempotencyService if it's primary or only one
                              @Value("${app.idempotency.cache-ttl-minutes:60}") long cacheTtlMinutes,
                              MeterRegistry meterRegistry) {
-        this.idempotencyService = idempotencyService;
+        this.idempotencyService = idempotencyService; // Now expects RedisIdempotencyService
         this.cacheTtlMinutes = cacheTtlMinutes;
         this.idempotentHitsCounter = Counter.builder("idempotency.filter.hits")
             .description("Number of requests served from idempotency cache")

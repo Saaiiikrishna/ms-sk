@@ -14,6 +14,11 @@ spring:
   #    ddl-auto: create-drop # create schema on startup, drop on shutdown
   #  show-sql: true
 
+  # Embedded Redis for integration tests
+  redis:
+    embedded: true # Ensure ozimov embedded redis is activated
+    # port: 6380 # Optional: specify a different port for embedded redis if needed
+
 keycloak:
   # For integration tests, Keycloak interactions are typically mocked or a test Keycloak instance is used.
   # Disabling actual Keycloak communication for these tests unless a testcontainer setup for Keycloak is added.
@@ -25,13 +30,20 @@ keycloak:
 
 kafka:
   bootstrap-servers: ${spring.embedded.kafka.brokers} # Connect to embedded Kafka
+  schema-registry-url: http://localhost:8081 # Placeholder, Testcontainers will override for Avro tests
   topics:
     orderCreated: test.order.created
+    orderCreatedDlq: test.order.created.dlq
     orderCancelled: test.order.cancelled
+    orderCancelledDlq: test.order.cancelled.dlq
 
 app:
   idempotency:
     cache-ttl-minutes: 1 # Short TTL for testing idempotency cache expiry
+  ratelimit:
+    capacity: 3 # Low capacity for testing
+    refill-tokens: 3 # Refill up to capacity
+    refill-duration-minutes: 1 # Refill period
 
 # Ensure actuator endpoints are available for testing if needed, but secure them appropriately
 management:

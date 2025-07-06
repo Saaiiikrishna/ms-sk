@@ -1,6 +1,9 @@
 spring:
   application:
     name: order-api
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
 
 keycloak:
   realm: MyRealm
@@ -12,13 +15,20 @@ keycloak:
 
 kafka:
   bootstrap-servers: ${KAFKA_BROKER:localhost:9092} # Default to localhost:9092 if KAFKA_BROKER is not set
+  schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8081} # Added for later Avro step
   topics:
     orderCreated: order.created
+    orderCreatedDlq: order.created.dlq
     orderCancelled: order.cancelled
+    orderCancelledDlq: order.cancelled.dlq
 
 app:
   idempotency:
     cache-ttl-minutes: 60
+  ratelimit:
+    capacity: 100 # Max tokens bucket can hold
+    refill-tokens: 100 # Tokens to add per refill period
+    refill-duration-minutes: 1 # Duration of refill period
 
 # Default Spring Boot Actuator settings for observability
 management:
