@@ -177,4 +177,3 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("message", "Password rotation process initiated for user " + userId));
     }
 }
-```
