@@ -11,9 +11,11 @@ import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
+import io.micrometer.core.annotation.Counted; // For @Counted
+import io.micrometer.core.annotation.Timed;   // For @Timed
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Timer;
+// Timer class no longer needed if all timers are via @Timed
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
@@ -38,12 +40,10 @@ public class PaymentServiceImpl implements PaymentService {
     private final MeterRegistry meterRegistry;
 
     // Metrics
-    private final Counter paymentRequestsTotal;
-    private final Counter paymentSuccessTotal;
-    private final Counter paymentFailureTotal;
-    private final Timer razorpayOrderCreateTimer;
-    private final Timer razorpayPaymentsFetchTimer; // Added for fetchPayments
-    private final Timer razorpayPaymentCaptureTimer;
+    // private final Counter paymentRequestsTotal; // Will be replaced by @Counted
+    private final Counter paymentSuccessTotal; // Programmatic remains for conditional increment
+    private final Counter paymentFailureTotal; // Programmatic remains for conditional increment
+    // Timers will be replaced by @Timed
 
     public PaymentServiceImpl(PaymentRepository paymentRepository,
                               OutboxEventService outboxEventService,
@@ -54,32 +54,19 @@ public class PaymentServiceImpl implements PaymentService {
         this.outboxEventService = outboxEventService;
         this.razorpayClient = razorpayClient;
         this.vendorPayoutService = vendorPayoutService;
-        this.meterRegistry = meterRegistry;
+        this.meterRegistry = meterRegistry; // Keep for programmatic counters/gauge if any
 
-        // Initialize Metrics
-        this.paymentRequestsTotal = Counter.builder("payment.service.requests.total")
-                .description("Total number of payment requests received")
-                .register(meterRegistry);
+        // Initialize Metrics that remain programmatic
         this.paymentSuccessTotal = Counter.builder("payment.service.success.total")
                 .description("Total number of successful payment transactions")
-                .tags("type", "capture") // Differentiate from payout success
+                .tags("type", "capture")
                 .register(meterRegistry);
         this.paymentFailureTotal = Counter.builder("payment.service.failure.total")
                 .description("Total number of failed payment transactions")
                 .tags("type", "capture")
                 .register(meterRegistry);
-        this.razorpayOrderCreateTimer = Timer.builder("payment.service.razorpay.orders.create.timer")
-                .description("Timer for Razorpay Order create API calls")
-                .publishPercentiles(0.5, 0.95, 0.99)
-                .register(meterRegistry);
-        this.razorpayPaymentsFetchTimer = Timer.builder("payment.service.razorpay.orders.fetchpayments.timer")
-                .description("Timer for Razorpay Order fetchPayments API calls")
-                .publishPercentiles(0.5, 0.95, 0.99)
-                .register(meterRegistry);
-        this.razorpayPaymentCaptureTimer = Timer.builder("payment.service.razorpay.payments.capture.timer")
-                .description("Timer for Razorpay Payment capture API calls")
-                .publishPercentiles(0.5, 0.95, 0.99)
-                .register(meterRegistry);
+        // paymentRequestsTotal, razorpayOrderCreateTimer, razorpayPaymentsFetchTimer,
+        // and razorpayPaymentCaptureTimer will be handled by annotations.
     }
 
     @Value("${kafka.topics.paymentSucceeded}")
@@ -89,8 +76,9 @@ public class PaymentServiceImpl implements PaymentService {
     private String paymentFailedTopic;
 
     @Override
+    @Counted(value = "payment.service.requests.total", description = "Total number of payment requests received")
     public void processPaymentRequest(PaymentRequestedEvent event) {
-        paymentRequestsTotal.increment(); // Increment request counter
+        // paymentRequestsTotal.increment(); // No longer needed, @Counted handles this
         log.info("Processing payment request for order ID: {}, Amount: {} {}",
                 event.getOrderId(), event.getAmount(), event.getCurrency());
 
@@ -315,11 +303,18 @@ public class PaymentServiceImpl implements PaymentService {
 
     // --- Resilience4j Helper Methods & Fallbacks for Razorpay API calls ---
 
+import io.micrometer.core.annotation.Timed; // Import @Timed
+
+// ... (other imports)
+
+// --- Resilience4j Helper Methods & Fallbacks for Razorpay API calls ---
+    @Timed(value = "payment.service.razorpay.orders.create.timer", description = "Timer for Razorpay Order create API calls", percentiles = {0.5, 0.95, 0.99})
     @CircuitBreaker(name = "razorpayOrdersApi", fallbackMethod = "createOrderFallback")
     @Retry(name = "razorpayApiRetry")
     protected Order callRazorpayCreateOrder(JSONObject orderRequest) throws RazorpayException {
         log.debug("Calling RazorpayClient.Orders.create: {}", orderRequest.toString());
-        return razorpayOrderCreateTimer.recordCallable(() -> razorpayClient.Orders.create(orderRequest));
+        // return razorpayOrderCreateTimer.recordCallable(() -> razorpayClient.Orders.create(orderRequest)); // Removed programmatic timer
+        return razorpayClient.Orders.create(orderRequest);
     }
 
     protected Order createOrderFallback(JSONObject orderRequest, Throwable t) throws RazorpayException {

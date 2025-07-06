@@ -44,11 +44,23 @@ public class VendorPayoutService {
     private final CommissionProperties commissionProperties;
     private final MeterRegistry meterRegistry;
 
+import io.micrometer.core.annotation.Counted; // Import @Counted
+import io.micrometer.core.annotation.Timed;   // Import @Timed
+
+// ... (other imports)
+
+// @RequiredArgsConstructor // Cannot use with manual constructor for metrics
+@Slf4j
+public class VendorPayoutService {
+
+    // ... (other fields) ...
+    private final MeterRegistry meterRegistry;
+
     // Metrics
-    private final Counter payoutAttemptsTotal;
-    private final Counter payoutSuccessTotal; // For API call success / webhook confirmation
-    private final Counter payoutFailureTotal; // For API call failure / webhook confirmation
-    private final Timer razorpayPayoutCreateTimer;
+    // private final Counter payoutAttemptsTotal; // To be replaced by @Counted
+    private final Counter payoutSuccessTotal;    // Programmatic
+    private final Counter payoutFailureTotal;    // Programmatic
+    // private final Timer razorpayPayoutCreateTimer; // To be replaced by @Timed
 
     @Value("${kafka.topics.vendorPayoutInitiated:vendor.payout.initiated}")
     private String vendorPayoutInitiatedTopic;
@@ -71,26 +83,22 @@ public class VendorPayoutService {
         this.razorpayClient = razorpayClient;
         this.outboxEventService = outboxEventService;
         this.commissionProperties = commissionProperties;
-        this.meterRegistry = meterRegistry;
+        this.meterRegistry = meterRegistry; // Keep for programmatic counters
 
-        this.payoutAttemptsTotal = Counter.builder("payment.service.payouts.attempts.total")
-                .description("Total number of vendor payout attempts initiated")
-                .register(meterRegistry);
+        // Initialize programmatic counters
         this.payoutSuccessTotal = Counter.builder("payment.service.payouts.success.total")
                 .description("Total number of successful vendor payouts (confirmed by API/webhook)")
                 .register(meterRegistry);
         this.payoutFailureTotal = Counter.builder("payment.service.payouts.failure.total")
                 .description("Total number of failed vendor payouts (confirmed by API/webhook)")
                 .register(meterRegistry);
-        this.razorpayPayoutCreateTimer = Timer.builder("payment.service.razorpay.payouts.create.timer")
-                .description("Timer for Razorpay Payouts create API calls")
-                .publishPercentiles(0.5, 0.95, 0.99)
-                .register(meterRegistry);
+        // payoutAttemptsTotal and razorpayPayoutCreateTimer will be handled by annotations.
     }
 
     @Transactional // Main transaction for creating PayoutTransaction and initiating event
+    @Counted(value = "payment.service.payouts.attempts.total", description = "Total number of vendor payout attempts initiated")
     public UUID initiatePayout(UUID paymentTransactionId, UUID vendorId, BigDecimal grossAmount, String currency) {
-        payoutAttemptsTotal.increment(); // Increment attempt counter
+        // payoutAttemptsTotal.increment(); // No longer needed
         log.info("Initiating payout for PaymentTransaction ID: {}, Vendor ID: {}, Amount: {} {}",
                 paymentTransactionId, vendorId, grossAmount, currency);
 
@@ -383,11 +391,13 @@ public class VendorPayoutService {
 
     // --- Resilience4j Helper Method & Fallback for Razorpay Payouts.create ---
 
+    @Timed(value = "payment.service.razorpay.payouts.create.timer", description = "Timer for Razorpay Payouts create API calls", percentiles = {0.5, 0.95, 0.99})
     @CircuitBreaker(name = "razorpayPayoutsApi", fallbackMethod = "createPayoutFallback")
     @Retry(name = "razorpayApiRetry") // Using the same general retry policy
     protected Payout callRazorpayCreatePayout(JSONObject payoutRequest) throws RazorpayException {
         log.debug("Calling RazorpayClient.Payouts.create: {}", payoutRequest.toString());
-        return razorpayPayoutCreateTimer.recordCallable(() -> razorpayClient.Payouts.create(payoutRequest));
+        // return razorpayPayoutCreateTimer.recordCallable(() -> razorpayClient.Payouts.create(payoutRequest)); // Removed programmatic timer
+        return razorpayClient.Payouts.create(payoutRequest);
     }
 
     protected Payout createPayoutFallback(JSONObject payoutRequest, Throwable t) throws RazorpayException {

@@ -109,7 +109,7 @@ resilience4j:
         automaticTransitionFromOpenToHalfOpenEnabled: true
         waitDurationInOpenState: 10s # Wait 10s before transitioning to half-open
         failureRateThreshold: 60 # If 60% of calls fail, open circuit
-        eventConsumerBufferSize: 10
+        eventConsumerBufferSize: 100 # Increased buffer size
         recordExceptions:
           - com.razorpay.RazorpayException # Record all Razorpay exceptions
           - java.io.IOException
@@ -126,6 +126,7 @@ resilience4j:
         permittedNumberOfCallsInHalfOpenState: 3
         waitDurationInOpenState: 10s
         failureRateThreshold: 60
+        eventConsumerBufferSize: 100 # Added buffer size
         recordExceptions: [com.razorpay.RazorpayException, java.io.IOException]
         ignoreExceptions: [com.razorpay.BadRequestException]
       razorpayPayoutsApi: # For Razorpay Payouts.create calls
@@ -136,6 +137,7 @@ resilience4j:
         permittedNumberOfCallsInHalfOpenState: 2
         waitDurationInOpenState: 15s # Payouts might be more critical or have different characteristics
         failureRateThreshold: 50
+        eventConsumerBufferSize: 100 # Added buffer size
         recordExceptions: [com.razorpay.RazorpayException, java.io.IOException]
         ignoreExceptions: [com.razorpay.BadRequestException]
 
