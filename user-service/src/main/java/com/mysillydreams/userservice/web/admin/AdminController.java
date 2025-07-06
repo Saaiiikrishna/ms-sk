@@ -183,15 +183,3 @@ public class AdminController {
         public PageInventoryProfileDto() {super(Collections.emptyList());}
     }
 }
-```
-
-Key changes:
-*   `listAllUsers()` renamed to `listActiveUsers()` and calls `userService.listActiveUsers(pageable).map(UserDto::from)`.
-*   New endpoint `GET /admin/users/all-including-archived` calls `userService.listAllUsersIncludingArchived(pageable)`.
-*   New endpoint `GET /admin/users/archived` calls `userService.listArchivedUsers(pageable)`.
-*   `GET /admin/users/{userId}` now calls `userService.getUserByIdIncludingArchived(userId)`.
-*   New endpoint `DELETE /admin/users/{userId}/soft` created. It first fetches the user by ID to get their reference ID (as `softDeleteUserByReferenceId` takes reference ID), then calls the service method.
-*   New method `userService.userExistsIncludingArchived(userId)` used in `/force-delete`.
-*   Removed direct `UserRepository` injection, using `UserService` for all user data access.
-
-This completes the update for `AdminController.java`.
