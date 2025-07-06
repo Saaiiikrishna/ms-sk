@@ -40,10 +40,11 @@ public class PaymentServiceImpl implements PaymentService {
     private final MeterRegistry meterRegistry;
 
     // Metrics
-    // private final Counter paymentRequestsTotal; // Will be replaced by @Counted
+    // Metrics
     private final Counter paymentSuccessTotal; // Programmatic remains for conditional increment
     private final Counter paymentFailureTotal; // Programmatic remains for conditional increment
-    // Timers will be replaced by @Timed
+    // @Counted for payment.service.requests.total will be on processPaymentRequest method
+    // @Timed for Razorpay calls will be on helper methods
 
     public PaymentServiceImpl(PaymentRepository paymentRepository,
                               OutboxEventService outboxEventService,
@@ -54,7 +55,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.outboxEventService = outboxEventService;
         this.razorpayClient = razorpayClient;
         this.vendorPayoutService = vendorPayoutService;
-        this.meterRegistry = meterRegistry; // Keep for programmatic counters/gauge if any
+        this.meterRegistry = meterRegistry; // Keep for programmatic counters
 
         // Initialize Metrics that remain programmatic
         this.paymentSuccessTotal = Counter.builder("payment.service.success.total")
@@ -65,8 +66,6 @@ public class PaymentServiceImpl implements PaymentService {
                 .description("Total number of failed payment transactions")
                 .tags("type", "capture")
                 .register(meterRegistry);
-        // paymentRequestsTotal, razorpayOrderCreateTimer, razorpayPaymentsFetchTimer,
-        // and razorpayPaymentCaptureTimer will be handled by annotations.
     }
 
     @Value("${kafka.topics.paymentSucceeded}")
@@ -76,9 +75,11 @@ public class PaymentServiceImpl implements PaymentService {
     private String paymentFailedTopic;
 
     @Override
-    @Counted(value = "payment.service.requests.total", description = "Total number of payment requests received")
+    // User sketch suggests @Timed("payment.process.time") and @Counted("payment.process.count") here.
+    // My current @Counted is "payment.service.requests.total". I'll align with user sketch name.
+    @Timed(value = "payment.process.time", description = "Time to process customer payment")
+    @Counted(value = "payment.process.count", description = "Total customer payments processed")
     public void processPaymentRequest(PaymentRequestedEvent event) {
-        // paymentRequestsTotal.increment(); // No longer needed, @Counted handles this
         log.info("Processing payment request for order ID: {}, Amount: {} {}",
                 event.getOrderId(), event.getAmount(), event.getCurrency());
 

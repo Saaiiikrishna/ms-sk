@@ -57,10 +57,11 @@ public class VendorPayoutService {
     private final MeterRegistry meterRegistry;
 
     // Metrics
-    // private final Counter payoutAttemptsTotal; // To be replaced by @Counted
+    // Metrics
     private final Counter payoutSuccessTotal;    // Programmatic
     private final Counter payoutFailureTotal;    // Programmatic
-    // private final Timer razorpayPayoutCreateTimer; // To be replaced by @Timed
+    // @Counted for payment.service.payouts.attempts.total will be on initiatePayout method
+    // @Timed for Razorpay Payouts.create will be on helper method callRazorpayCreatePayout
 
     @Value("${kafka.topics.vendorPayoutInitiated:vendor.payout.initiated}")
     private String vendorPayoutInitiatedTopic;
@@ -86,19 +87,20 @@ public class VendorPayoutService {
         this.meterRegistry = meterRegistry; // Keep for programmatic counters
 
         // Initialize programmatic counters
-        this.payoutSuccessTotal = Counter.builder("payment.service.payouts.success.total")
+        this.payoutSuccessTotal = Counter.builder("payment.service.payouts.success.total") // Renamed for consistency
                 .description("Total number of successful vendor payouts (confirmed by API/webhook)")
                 .register(meterRegistry);
-        this.payoutFailureTotal = Counter.builder("payment.service.payouts.failure.total")
+        this.payoutFailureTotal = Counter.builder("payment.service.payouts.failure.total") // Renamed for consistency
                 .description("Total number of failed vendor payouts (confirmed by API/webhook)")
                 .register(meterRegistry);
-        // payoutAttemptsTotal and razorpayPayoutCreateTimer will be handled by annotations.
     }
 
     @Transactional // Main transaction for creating PayoutTransaction and initiating event
-    @Counted(value = "payment.service.payouts.attempts.total", description = "Total number of vendor payout attempts initiated")
+    // User sketch: @Timed(value = "vendor.payout.time", ...) @Counted(value = "vendor.payout.count", ...)
+    // My current @Counted is "payment.service.payouts.attempts.total". I'll align with user sketch.
+    @Timed(value = "vendor.payout.time", description = "Time taken to initiate vendor payout")
+    @Counted(value = "vendor.payout.count", description = "Number of vendor payouts initiated")
     public UUID initiatePayout(UUID paymentTransactionId, UUID vendorId, BigDecimal grossAmount, String currency) {
-        // payoutAttemptsTotal.increment(); // No longer needed
         log.info("Initiating payout for PaymentTransaction ID: {}, Vendor ID: {}, Amount: {} {}",
                 paymentTransactionId, vendorId, grossAmount, currency);
 
