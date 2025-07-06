@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -47,9 +48,7 @@ public class DynamicPricingRuleService {
         CatalogItemEntity item = itemRepository.findById(request.getItemId())
                 .orElseThrow(() -> new ResourceNotFoundException("CatalogItem", "id", request.getItemId()));
 
-        // TODO: Validate request.getParameters() based on request.getRuleType()
-        // e.g., if ruleType is "TIME_OF_DAY", ensure "start_hour", "end_hour" params exist and are valid.
-        // For now, assuming parameters are structurally valid as received.
+        validateParameters(request.getRuleType(), request.getParameters());
 
         DynamicPricingRuleEntity rule = DynamicPricingRuleEntity.builder()
                 .catalogItem(item)
@@ -116,7 +115,7 @@ public class DynamicPricingRuleService {
             throw new UnsupportedOperationException("Changing the rule type of an existing dynamic pricing rule is not supported.");
         }
 
-        // TODO: Validate request.getParameters() based on rule.getRuleType()
+        validateParameters(rule.getRuleType(), request.getParameters());
         rule.setParameters(request.getParameters());
         rule.setEnabled(request.getEnabled());
         rule.setCreatedBy(updatedBy); // Or have a separate updatedBy field
@@ -157,6 +156,33 @@ public class DynamicPricingRuleService {
 
         ruleRepository.delete(rule);
         log.info("Dynamic pricing rule deleted with ID: {}", ruleId);
+    }
+
+    private void validateParameters(String ruleType, Map<String, Object> parameters) {
+        if (parameters == null) {
+            throw new IllegalArgumentException("Parameters map cannot be null");
+        }
+        if ("PERCENT_OFF".equalsIgnoreCase(ruleType)) {
+            Object pct = parameters.get("discountPercentage");
+            if (!(pct instanceof Number)) {
+                throw new IllegalArgumentException("discountPercentage parameter is required for PERCENT_OFF rule");
+            }
+            double val = ((Number) pct).doubleValue();
+            if (val <= 0 || val > 100) {
+                throw new IllegalArgumentException("discountPercentage must be between 0 and 100");
+            }
+        } else if ("TIME_OF_DAY".equalsIgnoreCase(ruleType)) {
+            Object start = parameters.get("startHour");
+            Object end = parameters.get("endHour");
+            if (!(start instanceof Number) || !(end instanceof Number)) {
+                throw new IllegalArgumentException("startHour and endHour parameters are required for TIME_OF_DAY rule");
+            }
+            int s = ((Number) start).intValue();
+            int e = ((Number) end).intValue();
+            if (s < 0 || s > 23 || e < 0 || e > 23) {
+                throw new IllegalArgumentException("startHour and endHour must be between 0 and 23");
+            }
+        }
     }
 
     private DynamicPricingRuleDto convertToDto(DynamicPricingRuleEntity entity) {
