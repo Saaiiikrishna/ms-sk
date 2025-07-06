@@ -10,7 +10,6 @@ import com.mysillydreams.userservice.service.UserService; // To get UserEntity i
 import com.mysillydreams.userservice.service.delivery.*;
 import com.mysillydreams.userservice.repository.delivery.OrderAssignmentRepository;
 import com.mysillydreams.userservice.service.delivery.OtpVerificationService;
-
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -68,6 +67,7 @@ public class DeliveryController {
                               DeliveryAssignmentService deliveryAssignmentService,
                               DeliveryEventService deliveryEventService,
                               DeliveryDocumentStorageService deliveryDocumentStorageService,
+                              OrderAssignmentRepository orderAssignmentRepository) {
                               OrderAssignmentRepository orderAssignmentRepository,
                               OtpVerificationService otpVerificationService) {
         this.deliveryOnboardingService = deliveryOnboardingService;
