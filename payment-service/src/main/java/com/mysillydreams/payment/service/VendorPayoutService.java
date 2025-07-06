@@ -12,6 +12,11 @@ import com.mysillydreams.payment.repository.PayoutTransactionRepository;
 import com.razorpay.Payout; // Razorpay Payout class
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
@@ -28,30 +33,64 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
+// @RequiredArgsConstructor // Cannot use with manual constructor for metrics
 @Slf4j
 public class VendorPayoutService {
 
     private final PayoutTransactionRepository payoutTransactionRepository;
-    private final PaymentRepository paymentRepository; // To fetch the original PaymentTransaction
+    private final PaymentRepository paymentRepository;
     private final RazorpayClient razorpayClient;
     private final OutboxEventService outboxEventService;
     private final CommissionProperties commissionProperties;
+    private final MeterRegistry meterRegistry;
 
-    @Value("${kafka.topics.vendorPayoutInitiated:vendor.payout.initiated}") // Default topic names
+    // Metrics
+    private final Counter payoutAttemptsTotal;
+    private final Counter payoutSuccessTotal; // For API call success / webhook confirmation
+    private final Counter payoutFailureTotal; // For API call failure / webhook confirmation
+    private final Timer razorpayPayoutCreateTimer;
+
+    @Value("${kafka.topics.vendorPayoutInitiated:vendor.payout.initiated}")
     private String vendorPayoutInitiatedTopic;
     @Value("${kafka.topics.vendorPayoutSucceeded:vendor.payout.succeeded}")
     private String vendorPayoutSucceededTopic;
     @Value("${kafka.topics.vendorPayoutFailed:vendor.payout.failed}")
     private String vendorPayoutFailedTopic;
 
-    // This needs to be configured, e.g., in application.yml or fetched from a secure source
-    @Value("${payment.razorpay.payout.account-id}") // e.g. "acc_xxxxxxxxxxxxxx"
+    @Value("${payment.razorpay.payout.account-id}")
     private String razorpayXAccountId;
 
+    public VendorPayoutService(PayoutTransactionRepository payoutTransactionRepository,
+                               PaymentRepository paymentRepository,
+                               RazorpayClient razorpayClient,
+                               OutboxEventService outboxEventService,
+                               CommissionProperties commissionProperties,
+                               MeterRegistry meterRegistry) {
+        this.payoutTransactionRepository = payoutTransactionRepository;
+        this.paymentRepository = paymentRepository;
+        this.razorpayClient = razorpayClient;
+        this.outboxEventService = outboxEventService;
+        this.commissionProperties = commissionProperties;
+        this.meterRegistry = meterRegistry;
+
+        this.payoutAttemptsTotal = Counter.builder("payment.service.payouts.attempts.total")
+                .description("Total number of vendor payout attempts initiated")
+                .register(meterRegistry);
+        this.payoutSuccessTotal = Counter.builder("payment.service.payouts.success.total")
+                .description("Total number of successful vendor payouts (confirmed by API/webhook)")
+                .register(meterRegistry);
+        this.payoutFailureTotal = Counter.builder("payment.service.payouts.failure.total")
+                .description("Total number of failed vendor payouts (confirmed by API/webhook)")
+                .register(meterRegistry);
+        this.razorpayPayoutCreateTimer = Timer.builder("payment.service.razorpay.payouts.create.timer")
+                .description("Timer for Razorpay Payouts create API calls")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+    }
 
     @Transactional // Main transaction for creating PayoutTransaction and initiating event
     public UUID initiatePayout(UUID paymentTransactionId, UUID vendorId, BigDecimal grossAmount, String currency) {
+        payoutAttemptsTotal.increment(); // Increment attempt counter
         log.info("Initiating payout for PaymentTransaction ID: {}, Vendor ID: {}, Amount: {} {}",
                 paymentTransactionId, vendorId, grossAmount, currency);
 
@@ -143,34 +182,28 @@ public class VendorPayoutService {
             // Notes can be added if needed:
             // payoutRequest.put("notes", new JSONObject().put("internal_payout_id", pt.getId().toString()));
 
+            // Call resilience-enabled helper method
+            Payout razorpayPayout = callRazorpayCreatePayout(payoutRequest);
 
-            log.debug("Calling Razorpay Payouts.create with request: {}", payoutRequest.toString());
-            Payout razorpayPayout = razorpayClient.Payouts.create(payoutRequest); // Uses Payouts API
             String rzpPayoutId = razorpayPayout.get("id");
-            String rzpStatus = razorpayPayout.get("status"); // e.g., "pending", "processing", "processed", "failed"
+            String rzpStatus = razorpayPayout.get("status");
 
             log.info("Razorpay Payout API call successful for Payout ID: {}. Razorpay Payout ID: {}, Razorpay Status: {}",
                     pt.getId(), rzpPayoutId, rzpStatus);
 
             pt.setRazorpayPayoutId(rzpPayoutId);
-            // Update status based on Razorpay's response.
-            // If status is "pending" or "processing", webhook will confirm final state.
-            // If status is "processed" directly, it's a success.
-            // If status is "failed" directly, it's a failure.
-            // For simplicity, we set to PENDING here and rely on webhooks for final states.
-            // However, Razorpay documentation should be checked for typical synchronous responses.
-            // The guide sets to PENDING.
-            pt.setStatus(PayoutStatus.PENDING); // Or map rzpStatus to PayoutStatus
+            pt.setStatus(PayoutStatus.PENDING);
             payoutTransactionRepository.save(pt);
             log.info("PayoutTransaction ID {} updated to PENDING with Razorpay Payout ID {}.", pt.getId(), rzpPayoutId);
 
         } catch (RazorpayException e) {
-            log.error("RazorpayException during payout for Payout ID {}: {} (Code: {})",
-                    pt.getId(), e.getMessage(), e.get("code"), e); // RazorpayException might not have get("code")
+            log.error("RazorpayException during payout for Payout ID {}: {}",
+                    pt.getId(), e.getMessage(), e);
             pt.setStatus(PayoutStatus.FAILED);
-            pt.setErrorCode(e.getClass().getSimpleName()); // Or parse from e.getMessage() if Razorpay provides structured errors
+            pt.setErrorCode(e.getClass().getSimpleName());
             pt.setErrorMessage(e.getMessage());
             payoutTransactionRepository.save(pt);
+            payoutFailureTotal.increment(); // Increment failure counter for API call
 
             VendorPayoutFailedEvent failedEvent = VendorPayoutFailedEvent.newBuilder()
                     .setPayoutId(pt.getId().toString())
@@ -201,6 +234,7 @@ public class VendorPayoutService {
             pt.setErrorCode(e.getClass().getSimpleName());
             pt.setErrorMessage("Unexpected error: " + e.getMessage());
             payoutTransactionRepository.save(pt);
+            payoutFailureTotal.increment(); // Increment failure counter for unexpected error during API call phase
             // Publish failure event (similar to above)
              VendorPayoutFailedEvent failedEvent = VendorPayoutFailedEvent.newBuilder()
                     .setPayoutId(pt.getId().toString())
@@ -250,6 +284,7 @@ public class VendorPayoutService {
         pt.setStatus(PayoutStatus.SUCCESS);
         // pt.setUpdatedAt(processedAt); // Or let @UpdateTimestamp handle it
         payoutTransactionRepository.save(pt);
+        payoutSuccessTotal.increment(); // Increment success counter from webhook
         log.info("PayoutTransaction ID {} marked SUCCESS.", pt.getId());
 
         VendorPayoutSucceededEvent succeededEvent = VendorPayoutSucceededEvent.newBuilder()
@@ -297,6 +332,7 @@ public class VendorPayoutService {
         pt.setErrorCode(errorCode);
         pt.setErrorMessage(errorMessage);
         payoutTransactionRepository.save(pt);
+        payoutFailureTotal.increment(); // Increment failure counter from webhook
         log.info("PayoutTransaction ID {} marked FAILED due to webhook.", pt.getId());
 
         VendorPayoutFailedEvent failedEvent = VendorPayoutFailedEvent.newBuilder()
@@ -343,5 +379,21 @@ public class VendorPayoutService {
         // Forcing an error if not one of the test vendorId suffixes.
         // throw new IllegalStateException("Fund account ID lookup not implemented for vendor: " + vendorId);
         return null; // Simulate not found to test failure path
+    }
+
+    // --- Resilience4j Helper Method & Fallback for Razorpay Payouts.create ---
+
+    @CircuitBreaker(name = "razorpayPayoutsApi", fallbackMethod = "createPayoutFallback")
+    @Retry(name = "razorpayApiRetry") // Using the same general retry policy
+    protected Payout callRazorpayCreatePayout(JSONObject payoutRequest) throws RazorpayException {
+        log.debug("Calling RazorpayClient.Payouts.create: {}", payoutRequest.toString());
+        return razorpayPayoutCreateTimer.recordCallable(() -> razorpayClient.Payouts.create(payoutRequest));
+    }
+
+    protected Payout createPayoutFallback(JSONObject payoutRequest, Throwable t) throws RazorpayException {
+        log.warn("Fallback for callRazorpayCreatePayout due to: {}. Request: {}", t.getMessage(), payoutRequest.toString());
+        if (t instanceof RazorpayException) throw (RazorpayException) t;
+        // Wrap other exceptions in RazorpayException to be handled by the calling method's catch block
+        throw new RazorpayException("Razorpay Payouts.create call failed and fallback triggered: " + t.getMessage());
     }
 }

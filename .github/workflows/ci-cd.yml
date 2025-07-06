@@ -38,7 +38,7 @@ jobs:
       - name: Build & run tests
         # -B runs in batch mode (non-interactive)
         # -am also makes dependent modules
-        run: mvn clean verify -pl order-api,order-core -am -B
+        run: mvn clean verify -pl order-api,order-core,inventory-api,payment-service -am -B # Added inventory-api and payment-service
 
   docker:
     name: Build & Push Docker Images
@@ -75,6 +75,11 @@ jobs:
         run: |
           docker build -t ${{ env.REGISTRY_URL }}/inventory-api:${{ env.IMAGE_TAG }} -f inventory-api/Dockerfile inventory-api
           docker push ${{ env.REGISTRY_URL }}/inventory-api:${{ env.IMAGE_TAG }}
+
+      - name: Build and push payment-service image
+        run: |
+          docker build -t ${{ env.REGISTRY_URL }}/payment-service:${{ env.IMAGE_TAG }} -f payment-service/Dockerfile payment-service
+          docker push ${{ env.REGISTRY_URL }}/payment-service:${{ env.IMAGE_TAG }}
 
   deploy:
     name: Deploy to Kubernetes (dev)
@@ -122,7 +127,13 @@ jobs:
         run: |
           kubectl -n dev set image deployment/inventory-api inventory-api=${{ env.REGISTRY_URL }}/inventory-api:${{ env.IMAGE_TAG }}
           kubectl -n dev apply -f inventory-api/k8s/
+          kubectl -n dev rollout status deployment/inventory-api --timeout=120s # Added rollout status
 
+      - name: Deploy payment-service
+        run: |
+          kubectl -n dev set image deployment/payment-service payment-service=${{ env.REGISTRY_URL }}/payment-service:${{ env.IMAGE_TAG }}
+          kubectl -n dev apply -f payment-service/k8s/
+          kubectl -n dev rollout status deployment/payment-service --timeout=120s
 
   smoke-test:
     name: End-to-End Smoke Test

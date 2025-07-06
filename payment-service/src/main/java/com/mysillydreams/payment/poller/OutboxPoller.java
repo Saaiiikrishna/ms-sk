@@ -2,6 +2,8 @@ package com.mysillydreams.payment.poller; // Changed package
 
 import com.mysillydreams.payment.domain.OutboxEvent; // Changed import
 import com.mysillydreams.payment.repository.OutboxRepository; // Changed import
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -17,15 +19,29 @@ import java.util.UUID; // Added import
 import java.util.concurrent.CompletableFuture;
 
 @Service
-@RequiredArgsConstructor
+// @RequiredArgsConstructor // Cannot use with manual constructor for metrics
 @Slf4j
 public class OutboxPoller {
 
     private final OutboxRepository outboxRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate; // Bean from KafkaConfig
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final MeterRegistry meterRegistry; // For outbox gauge
+
+    public OutboxPoller(OutboxRepository outboxRepository,
+                        KafkaTemplate<String, Object> kafkaTemplate,
+                        MeterRegistry meterRegistry) {
+        this.outboxRepository = outboxRepository;
+        this.kafkaTemplate = kafkaTemplate;
+        this.meterRegistry = meterRegistry;
+
+        // Register a gauge for the outbox backlog size
+        Gauge.builder("payment.service.outbox.backlog.size", outboxRepository,
+                        OutboxRepository::countByProcessedFalse) // Method reference to the new method
+                .description("Current number of unprocessed events in the outbox")
+                .register(meterRegistry);
+    }
 
     // In PaymentServiceImpl, the eventType stored in OutboxEvent IS the topic name.
-    // So, no need for @Value topic fields here, can get topic directly from event.getEventType().
 
     @Scheduled(fixedDelayString = "${payment.outbox.poll.delay:5000}",
                initialDelayString = "${payment.outbox.poll.initialDelay:10000}")

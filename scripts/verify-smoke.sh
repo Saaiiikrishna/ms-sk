@@ -149,5 +149,24 @@ fi
 # After testing order/reservation:
 curl -s http://${INVENTORY_SERVICE_HOST}/inventory/SMOKE-SKU | jq .
 
+
+# 4. Verify Payment Service Health
+log_info "Step 4: Verifying Payment Service health..."
+# PAYMENT_SERVICE_HOST should be configured in CI environment, e.g. http://payment-service:8080 or http://payments.dev.mysillydreams.com
+# Defaulting to localhost for local execution if not set.
+PAYMENT_SERVICE_URL="${PAYMENT_SERVICE_HOST:-http://localhost:8083}/actuator/health"
+PAYMENT_HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${PAYMENT_SERVICE_URL}")
+
+if [ "$PAYMENT_HEALTH_STATUS" -eq 200 ]; then
+    log_info "Payment Service is UP. Health endpoint returned HTTP 200."
+    # Optionally, parse JSON response: PAYMENT_HEALTH_JSON=$(curl -s "${PAYMENT_SERVICE_URL}")
+    # if echo "$PAYMENT_HEALTH_JSON" | jq -e '.status == "UP"' > /dev/null; then ...
+else
+    log_error "Payment Service is DOWN or unhealthy. Health endpoint returned HTTP $PAYMENT_HEALTH_STATUS. URL: ${PAYMENT_SERVICE_URL}"
+    # curl -s "${PAYMENT_SERVICE_URL}" # Print response for debugging
+    exit 1
+fi
+
+
 log_info "Smoke test completed successfully!"
 exit 0

@@ -20,4 +20,12 @@ public interface OutboxRepository extends JpaRepository<OutboxEvent, UUID> {
      * @return A list of unprocessed OutboxEvent entities.
      */
     List<OutboxEvent> findByProcessedFalseOrderByCreatedAtAsc(Pageable pageable);
+
+    /**
+     * Counts the number of OutboxEvent entities that have not yet been processed.
+     * Used for monitoring the outbox backlog size.
+     *
+     * @return The count of unprocessed outbox events.
+     */
+    long countByProcessedFalse();
 }

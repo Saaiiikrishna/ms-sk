@@ -97,31 +97,71 @@ payment:
     percent: ${APP_COMMISSION_PERCENT:10.0} # Default to 10%, configurable via env var
 
 # Resilience4j circuit breaker example config (if used)
-# resilience4j.circuitbreaker:
-#   instances:
-#     razorpayApi:
-#       registerHealthIndicator: true
-#       slidingWindowSize: 10
-#       minimumNumberOfCalls: 5
-#       permittedNumberOfCallsInHalfOpenState: 3
-#       automaticTransitionFromOpenToHalfOpenEnabled: true
-#       waitDurationInOpenState: 5s
-#       failureRateThreshold: 50
-#       eventConsumerBufferSize: 10
-#       ignoreExceptions:
-#         - com.razorpay.BadRequestException # Example: Don't open circuit for client errors
-# resilience4j.retry:
-#   instances:
-#     razorpayApi:
-#       maxAttempts: 3
-#       waitDuration: 100ms
-#       retryExceptions:
-#         - java.io.IOException
-#         - com.razorpay.RazorpayException # More specific exceptions to retry on
-#       ignoreExceptions:
-#         - com.razorpay.BadRequestException
-# resilience4j.timelimiter:
-#   instances:
-#     razorpayApi:
-#       timeoutDuration: 2s
-#       cancelRunningFuture: true
+resilience4j:
+  circuitbreaker:
+    instances:
+      razorpayOrdersApi: # For Razorpay Order related calls
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10 # Last 10 calls
+        minimumNumberOfCalls: 5 # Minimum calls before CB calculates error rate
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s # Wait 10s before transitioning to half-open
+        failureRateThreshold: 60 # If 60% of calls fail, open circuit
+        eventConsumerBufferSize: 10
+        recordExceptions:
+          - com.razorpay.RazorpayException # Record all Razorpay exceptions
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+        ignoreExceptions: # Exceptions that should not count as failures
+          - com.razorpay.BadRequestException # e.g. 4xx errors from client mistakes
+          # Add other specific client-side error exceptions from Razorpay if identifiable
+      razorpayPaymentsApi: # For Razorpay Payment related calls (capture, fetch)
+        # Similar configuration as razorpayOrdersApi, can be tuned differently
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 60
+        recordExceptions: [com.razorpay.RazorpayException, java.io.IOException]
+        ignoreExceptions: [com.razorpay.BadRequestException]
+      razorpayPayoutsApi: # For Razorpay Payouts.create calls
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 8
+        minimumNumberOfCalls: 4
+        permittedNumberOfCallsInHalfOpenState: 2
+        waitDurationInOpenState: 15s # Payouts might be more critical or have different characteristics
+        failureRateThreshold: 50
+        recordExceptions: [com.razorpay.RazorpayException, java.io.IOException]
+        ignoreExceptions: [com.razorpay.BadRequestException]
+
+  retry:
+    instances:
+      razorpayApiRetry: # A general retry policy for Razorpay calls
+        maxAttempts: 3
+        waitDuration: 200ms # Initial wait duration
+        retryExceptions: # Exceptions that trigger a retry
+          - com.razorpay.RazorpayException # Retry on general Razorpay server-side issues
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          # Be careful not to retry on BadRequestException or similar client errors unless appropriate
+        ignoreExceptions: # Exceptions that should NOT trigger a retry
+          - com.razorpay.BadRequestException
+          # Add specific non-retryable Razorpay exceptions if documented
+        # For exponential backoff:
+        # enableExponentialBackoff: true
+        # exponentialBackoffMultiplier: 2
+        # maxWaitDuration: 2s # Optional max wait if using exponential backoff
+
+  # TimeLimiter can be used if @Async methods need external timeouts,
+  # but Razorpay SDK might have its own HTTP client timeouts.
+  # For synchronous calls wrapped in CB/Retry, usually not combined with TimeLimiter directly on the method.
+  # timelimiter:
+  #   instances:
+  #     razorpayTimeLimiter:
+  #       timeoutDuration: 3s # Max duration for a call
+  #       cancelRunningFuture: true
