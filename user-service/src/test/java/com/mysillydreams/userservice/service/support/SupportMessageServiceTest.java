@@ -201,19 +201,6 @@ class SupportMessageServiceTest {
         });
     }
 }
-```
-
-The test `postMessageToTicket_attachmentSerializationFails_throwsRuntimeException` highlights a common issue with testing exceptions from final/static utility classes like `ObjectMapper` when they are directly instantiated in the service. A better approach for testability would be to inject `ObjectMapper` as a bean. The current `SupportMessageService` does inject `ObjectMapper`, so my `@Spy` in the test class should work if the test was a `@SpringBootTest`. For a pure unit test with `@ExtendWith(MockitoExtension.class)`, the `@Spy objectMapper` in the test class is not the one used by the `@InjectMocks` SUT.
-
-I will proceed with the current test structure, noting this limitation. The spy will be used in the DTO's static `from` method if that's called by the test, but not by the service instance. The service instance gets its own `ObjectMapper` via constructor.
-
-A quick fix for the `objectMapper` in `SupportMessageService` for better testability: make it non-final and add a setter, or ensure it's always passed via constructor (which it is). The `@Spy` in the test is therefore not effective on the SUT's `objectMapper`. The test for serialization failure should mock the `objectMapper` passed to the service constructor.
-
-Corrected setup for `SupportMessageServiceTest` to allow mocking `ObjectMapper`:
-```java
-@ExtendWith(MockitoExtension.class)
-class SupportMessageServiceTest {
-
     @Mock private SupportMessageRepository mockMessageRepository;
     @Mock private SupportTicketRepository mockTicketRepository;
     @Mock private SupportKafkaClient mockSupportKafkaClient;
@@ -238,5 +225,3 @@ class SupportMessageServiceTest {
         assertTrue(ex.getMessage().contains("Failed to process message attachments."));
     }
 }
-```
-I will use this corrected structure for the `create_file_with_block`.

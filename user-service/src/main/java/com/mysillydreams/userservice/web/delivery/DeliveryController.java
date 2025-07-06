@@ -8,6 +8,8 @@ import com.mysillydreams.userservice.dto.delivery.OrderAssignmentDto;
 import com.mysillydreams.userservice.dto.delivery.OtpVerificationRequestDto;
 import com.mysillydreams.userservice.service.UserService; // To get UserEntity if needed for DeliveryProfile
 import com.mysillydreams.userservice.service.delivery.*;
+import com.mysillydreams.userservice.repository.delivery.OrderAssignmentRepository;
+import com.mysillydreams.userservice.service.delivery.OtpVerificationService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -58,16 +60,22 @@ public class DeliveryController {
     private final DeliveryAssignmentService deliveryAssignmentService;
     private final DeliveryEventService deliveryEventService;
     private final DeliveryDocumentStorageService deliveryDocumentStorageService; // For photo uploads
+    private final OrderAssignmentRepository orderAssignmentRepository;
+    private final OtpVerificationService otpVerificationService;
 
     @Autowired
     public DeliveryController(DeliveryOnboardingService deliveryOnboardingService,
                               DeliveryAssignmentService deliveryAssignmentService,
                               DeliveryEventService deliveryEventService,
-                              DeliveryDocumentStorageService deliveryDocumentStorageService) {
+                              DeliveryDocumentStorageService deliveryDocumentStorageService,
+                              OrderAssignmentRepository orderAssignmentRepository,
+                              OtpVerificationService otpVerificationService) {
         this.deliveryOnboardingService = deliveryOnboardingService;
         this.deliveryAssignmentService = deliveryAssignmentService;
         this.deliveryEventService = deliveryEventService;
         this.deliveryDocumentStorageService = deliveryDocumentStorageService;
+        this.orderAssignmentRepository = orderAssignmentRepository;
+        this.otpVerificationService = otpVerificationService;
     }
 
     // Helper to get current authenticated user's ID (assuming it's a UUID from JWT 'sub')
@@ -222,16 +230,7 @@ public class DeliveryController {
             OrderAssignment assignment = orderAssignmentRepository.findById(assignmentId)
                 .orElseThrow(() -> new EntityNotFoundException("OrderAssignment not found: " + assignmentId));
 
-            // TODO: Implement actual OTP verification logic.
-            // This would typically involve:
-            // 1. Fetching the expected OTP for this order/assignment (e.g., from Order Service or a Notification-Service cache).
-            // 2. Comparing it with otpRequest.getOtp().
-            // For this scaffold, we'll assume it's valid if it reaches here after prerequisite checks.
-            // The DeliveryEventService.verifyEventSequence might be called by DeliveryAssignmentService before status update.
-            // Here, we just record the attempt.
-
-            boolean isOtpValid = true; // Placeholder for actual OTP validation call
-            // Example: isOtpValid = otpVerificationServiceClient.verify(assignment.getOrderId(), otpRequest.getOtp());
+            boolean isOtpValid = otpVerificationService.verifyOtp(assignment.getOrderId(), otpRequest.getOtp());
 
             Map<String, Object> eventPayload = Map.of(
                 "otpAttempt", otpRequest.getOtp(), // Be cautious logging actual OTPs

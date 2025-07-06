@@ -208,4 +208,3 @@ class SupportTicketServiceTest {
         assertEquals(1, resultPage.getTotalElements());
     }
 }
-```
