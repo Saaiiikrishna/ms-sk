@@ -1,0 +1,38 @@
+{
+  "namespace": "com.mysillydreams.delivery.dto.avro",
+  "type": "record",
+  "name": "ShipmentRequestedEvent",
+  "doc": "Event consumed by Delivery Service to request a new shipment and delivery assignment. Expected from Order-Core.",
+  "fields": [
+    {"name": "orderId", "type": "string", "doc": "UUID of the order"},
+    {"name": "vendorId", "type": "string", "doc": "UUID of the vendor/warehouse for pickup"},
+    {"name": "customerId", "type": "string", "doc": "UUID of the customer for dropoff"},
+    {
+      "name": "pickupAddress",
+      "type": {
+        "type": "record",
+        "name": "AddressAvro",
+        "namespace": "com.mysillydreams.delivery.dto.avro", // Using local namespace
+        "doc": "Reusable address structure",
+        "fields": [
+          {"name": "street", "type": "string"},
+          {"name": "street2", "type": ["null", "string"], "default": null},
+          {"name": "city", "type": "string"},
+          {"name": "stateOrProvince", "type": "string"},
+          {"name": "postalCode", "type": "string"},
+          {"name": "countryCode", "type": "string"},
+          {"name": "latitude", "type": ["null", "double"], "default": null},
+          {"name": "longitude", "type": ["null", "double"], "default": null},
+          {"name": "contactName", "type": ["null", "string"], "default": null},
+          {"name": "contactPhone", "type": ["null", "string"], "default": null},
+          {"name": "instructions", "type": ["null", "string"], "default": null}
+        ]
+      }
+    },
+    {
+      "name": "dropoffAddress",
+      "type": "com.mysillydreams.delivery.dto.avro.AddressAvro" // Referencing local AddressAvro record
+    }
+    // Add other fields as necessary, e.g., package details, requested times
+  ]
+}

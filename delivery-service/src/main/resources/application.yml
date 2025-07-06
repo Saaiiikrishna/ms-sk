@@ -1,0 +1,87 @@
+spring:
+  application:
+    name: delivery-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:deliverydb} # Different port/db name for delivery
+    username: ${DB_USER:delivery_user}
+    password: ${DB_PASS:delivery_pass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate.format_sql: true
+      # hibernate.jdbc.lob.non_contextual_creation: true # For Hypersistence
+
+flyway:
+  enabled: true
+  locations: classpath:db/migration
+
+keycloak:
+  realm: MyRealm
+  auth-server-url: ${KEYCLOAK_URL:http://localhost:8180/auth}
+  resource: delivery-service-client # Client ID for Delivery Service
+  credentials:
+    secret: ${KEYCLOAK_SECRET:your-delivery-service-client-secret}
+  bearer-only: true
+
+kafka:
+  bootstrap-servers: ${KAFKA_BROKER:localhost:9092}
+  # schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8081} # If using Avro
+  consumer:
+    group-id: delivery-service-group
+    auto-offset-reset: earliest
+    properties:
+      # specific.avro.reader: true # This is now set in KafkaConsumerConfig.java
+      # schema.registry.url: ${kafka.schema-registry-url} # Also set in KafkaConsumerConfig.java
+      # Key/Value deserializers are also set in KafkaConsumerConfig.java
+      # No specific spring.json properties needed as we are moving to Avro for main listeners
+      # If some listeners still use JSON, they would need a separate factory and config.
+      # For now, assuming all event listeners will use the Avro factory.
+      # If specific.avro.reader is true, KafkaAvroDeserializer will attempt to find specific Avro classes.
+      # Ensure generated Avro classes are on the classpath.
+      # Ensure schema.registry.url is correctly pointing to your Schema Registry.
+      # (This is already injected via @Value in KafkaConsumerConfig)
+      _: "" # Placeholder to keep properties section if others are removed. Remove if not needed.
+  producer:
+    # Key/Value serializers and schema.registry.url are configured in KafkaProducerConfig.java
+    # No specific properties needed here if Java config is comprehensive.
+    # key-serializer: org.apache.kafka.common.serialization.StringSerializer (in Java config)
+    # value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer (in Java config)
+    properties:
+       schema.registry.url: ${kafka.schema-registry-url} # Can be redundant if set in Java config but doesn't hurt
+       auto.register.schemas: true # Can be redundant if set in Java config
+  topics:
+    # === Consumed by Delivery Service ===
+    orderShipmentRequested: ${CONSUMED_TOPIC_SHIPMENT_REQUESTED:order.shipment.requested}
+
+    # === Produced by Delivery Service ===
+    # Outbox events will use these as eventType which becomes the topic in OutboxPoller
+    deliveryAssignmentCreated: ${DELIVERY_TOPIC_ASSIGNMENT_CREATED:delivery.assignment.created}
+    deliveryPickedUp: ${DELIVERY_TOPIC_PICKED_UP:delivery.picked_up}
+    deliveryDelivered: ${DELIVERY_TOPIC_DELIVERED:delivery.delivered}
+    # Direct publish topic for GPS
+    deliveryGpsUpdates: ${DELIVERY_TOPIC_GPS_UPDATES:delivery.gps.updates}
+
+# WebSocket configuration (basic)
+# server:
+  # port: 8080 # Or as per environment variable
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,flyway
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+
+logging:
+  level:
+    com.mysillydreams.delivery: INFO
+    org.springframework.kafka: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %X{traceId:-N/A} %X{spanId:-N/A} %X{assignmentId:-} %-5level %logger{36} - %msg%n"

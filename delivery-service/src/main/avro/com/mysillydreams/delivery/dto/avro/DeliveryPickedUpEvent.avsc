@@ -1,0 +1,13 @@
+{
+  "namespace": "com.mysillydreams.delivery.dto.avro",
+  "type": "record",
+  "name": "DeliveryPickedUpEvent",
+  "doc": "Event published when a package has been picked up by the courier.",
+  "fields": [
+    {"name": "assignmentId", "type": "string", "doc": "UUID of the delivery assignment"},
+    {"name": "orderId", "type": "string", "doc": "UUID of the related order"},
+    {"name": "actualPickupTime", "type": "long", "logicalType": "timestamp-millis", "doc": "Actual pickup timestamp"},
+    {"name": "pickupPhotoUrl", "type": ["null", "string"], "default": null, "doc": "URL of the pickup confirmation photo, optional"},
+    {"name": "notes", "type": ["null", "string"], "default": null, "doc": "Courier notes at pickup, optional"}
+  ]
+}
