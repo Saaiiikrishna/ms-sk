@@ -60,6 +60,7 @@ public class DeliveryController {
     private final DeliveryEventService deliveryEventService;
     private final DeliveryDocumentStorageService deliveryDocumentStorageService; // For photo uploads
     private final OrderAssignmentRepository orderAssignmentRepository;
+
     private final OtpVerificationService otpVerificationService;
 
     @Autowired
@@ -68,13 +69,16 @@ public class DeliveryController {
                               DeliveryEventService deliveryEventService,
                               DeliveryDocumentStorageService deliveryDocumentStorageService,
                               OrderAssignmentRepository orderAssignmentRepository) {
+
                               OrderAssignmentRepository orderAssignmentRepository,
                               OtpVerificationService otpVerificationService) {
+
         this.deliveryOnboardingService = deliveryOnboardingService;
         this.deliveryAssignmentService = deliveryAssignmentService;
         this.deliveryEventService = deliveryEventService;
         this.deliveryDocumentStorageService = deliveryDocumentStorageService;
         this.orderAssignmentRepository = orderAssignmentRepository;
+
         this.otpVerificationService = otpVerificationService;
     }
 
