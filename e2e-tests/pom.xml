@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- This module would typically have a parent (the root POM of the monorepo) -->
+    <!-- For standalone operation or simplicity here, we can redefine spring-boot-starter-parent -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+
+    <groupId>com.mysillydreams</groupId>
+    <artifactId>e2e-tests</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>e2e-tests</name>
+    <description>End-to-End Tests for MySillyDreams Microservices</description>
+
+    <properties>
+        <java.version>17</java.version>
+        <testcontainers.version>1.19.7</testcontainers.version>
+        <keycloak.version>19.0.3</keycloak.version> <!-- If testing with Keycloak Testcontainer -->
+        <rest-assured.version>5.3.0</rest-assured.version> <!-- For HTTP calls -->
+        <!-- Other versions as needed, e.g., for Avro, Confluent if messages are inspected -->
+        <confluent.version>7.2.1</confluent.version>
+        <avro.version>1.11.3</avro.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot for test context and properties -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Testcontainers -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>redis</artifactId> <!-- Assuming RedisTestResource or similar if needed directly -->
+            <scope>test</scope>
+        </dependency>
+        <!-- For Keycloak Testcontainer -->
+        <dependency>
+            <groupId>dasniko</groupId> <!-- Community Keycloak Testcontainer -->
+            <artifactId>testcontainers-keycloak</artifactId>
+            <version>3.3.0</version> <!-- Check latest -->
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Kafka Clients (for programmatic produce/consume in tests if needed) -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+            <scope>test</scope> <!-- Or compile if test code needs it more broadly -->
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Avro & Schema Registry Client (if inspecting Avro messages) -->
+        <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
+            <version>${avro.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-avro-serializer</artifactId>
+            <version>${confluent.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-schema-registry-client</artifactId>
+            <version>${confluent.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- HTTP Client for making API calls (e.g., REST Assured or Spring's TestRestTemplate) -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${rest-assured.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency> <!-- If using Spring's TestRestTemplate -->
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-web</artifactId>
+             <scope>test</scope>
+        </dependency>
+
+
+        <!-- Dependencies on the microservices themselves to run them embedded -->
+        <!-- These would be actual module dependencies if this pom were part of a multi-module build -->
+        <!-- For now, these are illustrative. The E2E test would run the packaged JARs or use @SpringBootTest on their main classes. -->
+        <!--
+        <dependency>
+            <groupId>com.mysillydreams</groupId>
+            <artifactId>order-api</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.mysillydreams</groupId>
+            <artifactId>order-core</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        -->
+    </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- Repositories (like Confluent) might be needed if not inherited from a parent POM -->
+    <repositories>
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <plugin> <!-- Surefire plugin to run tests -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <!-- version from parent -->
+                <configuration>
+                    <!-- Configuration for running E2E tests if needed -->
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

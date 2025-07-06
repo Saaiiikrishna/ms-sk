@@ -1,0 +1,14 @@
+{
+  "namespace": "com.mysillydreams.orderapi.dto.avro",
+  "type": "record",
+  "name": "OrderCancelledEvent",
+  "fields": [
+    {"name": "orderId", "type": "string"},
+    {"name": "reason", "type": "string"},
+    {"name": "cancelledAt", "type": "long", "logicalType": "timestamp-millis"}
+  ]
+}
+// Notes:
+// - Namespace: com.mysillydreams.orderapi.dto.avro
+// - UUID orderId -> string
+// - Instant cancelledAt -> long with logicalType timestamp-millis

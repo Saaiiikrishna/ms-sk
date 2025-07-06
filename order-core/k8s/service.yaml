@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-core-service
+  namespace: default # Or your target namespace
+  labels:
+    app: order-core
+spec:
+  type: ClusterIP # Internal service, not directly exposed externally
+  selector:
+    app: order-core # Must match labels on the Pods (from Deployment)
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80 # Port the service will be available on within the cluster
+    targetPort: http # Name of the port on the Pod (e.g., 8080 defined in Deployment)
+  # - name: management # If actuator runs on a different port and needs a service port
+  #   protocol: TCP
+  #   port: 8081
+  #   targetPort: management
+---
+# Notes:
+# - This creates a ClusterIP service, making Order-Core accessible within the Kubernetes cluster
+#   at `order-core-service.namespace.svc.cluster.local` or just `order-core-service` if in the same namespace.
+# - If an internal REST API is exposed by Order-Core (e.g., InternalOrderController),
+#   other services within the cluster can reach it via this Service on port 80.
+# - If no HTTP endpoints are exposed by Order-Core (only Kafka interaction), this Service
+#   might primarily be for health checks or metrics scraping if not done directly from pods.
+#   However, even for Kafka-only apps, a Service is often defined for consistency and potential future use.
