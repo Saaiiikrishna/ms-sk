@@ -5,6 +5,7 @@ Several source and test files contained leftover markdown sections beginning wit
 - `auth-service/src/main/java/com/mysillydreams/auth/controller/AuthController.java`
 - `user-service/src/main/java/com/mysillydreams/userservice/web/admin/AdminController.java`
 - multiple test classes in `user-service`
+- `auth-service/src/test/java/com/mysillydreams/auth/repository/AdminMfaConfigRepositoryIntegrationTest.java`
 
 **Fix**: remove the markdown fragments from the files so that only valid Java code remains. This has been applied in this PR.
 
@@ -27,6 +28,11 @@ The integration test attempts to obtain a free port using `TestRestTemplate.getF
 
 **Suggested Solution**: Replace with a utility such as `SocketUtils.findAvailableTcpPort()` from Spring or use `ServerSocket` to allocate a free port.
 
-## 4. Incomplete TODO placeholders
+## 4. Duplicate `<dependencies>` Block in `user-service/pom.xml`
+An extra `<dependencies>` section was accidentally committed around line 160 of the POM, causing Maven to fail parsing the file.
+
+**Fix**: Remove the duplicated block so that only one `<dependencies>` section remains.
+
+## 5. Incomplete TODO placeholders
 Several services contain TODO markers for security, OTP validation, or event verification logic. These do not break compilation but represent unfinished behaviour. Implement the missing logic as required by business rules.
 
