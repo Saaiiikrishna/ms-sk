@@ -121,10 +121,3 @@ public class DeliveryDocumentStorageServiceIntegrationTest extends UserIntegrati
         });
     }
 }
-```
-
-The `UserIntegrationTestBase` already sets up LocalStack S3 and configures `vendor.s3.endpoint-override`, `vendor.s3.region`, and `vendor.s3.bucket=test-bucket`. The `DeliveryDocumentStorageService` uses `@Value("${delivery.s3.photo-bucket:${vendor.s3.bucket}}")`, so it will correctly pick up `test-bucket`.
-
-This completes the integration test for `DeliveryDocumentStorageService`.
-
-Next will be the end-to-end API tests for `DeliveryController`.

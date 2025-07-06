@@ -158,5 +158,3 @@ public class DeliveryEventRepositoryTest {
         assertThat(nonExistentCount).isZero();
     }
 }
-```
-*Self-correction*: The `createAndSaveEvent` helper had extra parameters in the call compared to its definition. Fixed it.

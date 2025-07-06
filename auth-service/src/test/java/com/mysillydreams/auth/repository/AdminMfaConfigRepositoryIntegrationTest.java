@@ -105,8 +105,3 @@ public class AdminMfaConfigRepositoryIntegrationTest extends AuthIntegrationTest
         assertThat(foundOpt).isNotPresent();
     }
 }
-```
-
-I need an `AuthIntegrationTestBase.java` similar to `UserIntegrationTestBase.java` but for the Auth-Service context. This base class would set up Testcontainers for PostgreSQL if Auth-Service uses its own DB, and provide necessary properties like `app.simple-encryption.secret-key`.
-
-`auth-service/src/test/java/com/mysillydreams/auth/config/AuthIntegrationTestBase.java`:
