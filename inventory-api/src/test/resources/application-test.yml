@@ -1,0 +1,41 @@
+# Placeholder for application-test.yml
+# Test-specific properties will be added later.
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop # Use create-drop for tests to ensure clean slate
+  # Datasource will typically be overridden by Testcontainers in integration tests
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  kafka:
+    # Kafka will typically be overridden by Testcontainers (EmbeddedKafka)
+    bootstrap-servers: localhost:9093 # Different from main to avoid conflict
+  security:
+    oauth2:
+      client:
+        provider:
+          keycloak:
+            issuer-uri: http://localhost:8180/auth/realms/test # Dummy Keycloak for tests if needed
+# keycloak:
+  # realm: test
+  # auth-server-url: http://localhost:8180/auth
+  # resource: test-client
+  # public-client: true
+  # # Disable Keycloak for most unit/controller tests unless specifically testing security
+  # enabled: false # This might be a custom property or handled by Spring profiles
+
+# Disable Keycloak for tests if not using a Keycloak Testcontainer
+# This can be done via profiles or specific test configurations.
+# For @WebMvcTest, security is often mocked or disabled.
+# For full integration tests with security, a Keycloak Testcontainer would be used.
+# For now, assuming Keycloak might be disabled or mocked in many test scenarios.
+
+# Example: Disabling Keycloak adapter for tests via a property
+# keycloak.enabled: false # Check Keycloak adapter documentation for such properties.
+# If Keycloak auto-configuration is an issue, exclude it in test slices:
+# @SpringBootTest(excludeAutoConfiguration = KeycloakAutoConfiguration.class)
+# Or use profiles to conditionally enable Keycloak beans.
