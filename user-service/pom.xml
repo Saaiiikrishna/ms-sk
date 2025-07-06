@@ -159,20 +159,6 @@
         </dependencies>
     </dependencyManagement>
 
-    <!-- Add springdoc-openapi dependency -->
-    <dependencies>
-        <!-- ... other dependencies ... -->
-        <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-ui</artifactId>
-            <version>1.7.0</version> <!-- Align with version used in Auth-Service or use latest compatible -->
-        </dependency>
-    </dependencies>
-    <!-- Note: If existing <dependencies> block is already there, add it inside.
-         This diff assumes it's adding a new <dependencies> block or modifying one that only had the BOM.
-         The actual pom.xml has a large <dependencies> block. This needs to be an ADDITION to that.
-         Let's find the end of the existing dependencies block.
-    -->
 
     <build>
         <plugins>
