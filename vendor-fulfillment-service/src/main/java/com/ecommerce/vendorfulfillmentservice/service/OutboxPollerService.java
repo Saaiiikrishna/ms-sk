@@ -3,7 +3,7 @@ package com.ecommerce.vendorfulfillmentservice.service;
 import com.ecommerce.vendorfulfillmentservice.entity.OutboxEvent;
 import com.ecommerce.vendorfulfillmentservice.event.avro.VendorOrderAcknowledgedEvent;
 import com.ecommerce.vendorfulfillmentservice.event.avro.VendorOrderAssignedEvent;
-import com.ecommerce.vendorfulfillmentservice.event.avro.*; // Import all
+import com.ecommerce.vendorfulfillmentservice.event.avro.*;
 import com.ecommerce.vendorfulfillmentservice.repository.OutboxEventRepository;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import org.apache.avro.Schema;
@@ -48,6 +48,8 @@ public class OutboxPollerService {
     private String vendorOrderFulfilledTopic;
     @Value("${app.kafka.topic.vendor-order-reassigned}")
     private String vendorOrderReassignedTopic;
+    @Value("${app.kafka.topic.shipment-notification-requested}")
+    private String shipmentNotificationRequestedTopic;
     // Add other topic values as needed for other events
 
     @Value("${app.outbox.poller.batch-size:100}")
@@ -67,6 +69,7 @@ public class OutboxPollerService {
         eventTypeToClassMap.put(VendorOrderShippedEvent.class.getSimpleName(), VendorOrderShippedEvent.class);
         eventTypeToClassMap.put(VendorOrderFulfilledEvent.class.getSimpleName(), VendorOrderFulfilledEvent.class);
         eventTypeToClassMap.put(VendorOrderReassignedEvent.class.getSimpleName(), VendorOrderReassignedEvent.class);
+        eventTypeToClassMap.put(ShipmentNotificationRequestedEvent.class.getSimpleName(), ShipmentNotificationRequestedEvent.class);
         // Add other event types here:
     }
 
@@ -201,6 +204,8 @@ public class OutboxPollerService {
             return vendorOrderFulfilledTopic;
         } else if (VendorOrderReassignedEvent.class.getSimpleName().equals(eventType)) {
             return vendorOrderReassignedTopic;
+        } else if (ShipmentNotificationRequestedEvent.class.getSimpleName().equals(eventType)) {
+            return shipmentNotificationRequestedTopic;
         }
         // Add other event type to topic mappings here
         return null;

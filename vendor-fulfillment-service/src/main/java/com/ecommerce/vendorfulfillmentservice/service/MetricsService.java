@@ -20,8 +20,12 @@ public class MetricsService {
 
     // Counters for status changes
     private static final String STATUS_CHANGE_COUNTER_NAME = "vendor.assignment.status.changes";
+    private static final String ACTION_COUNTER_NAME = "vendor.assignment.actions"; // For non-status specific actions
     // Gauge for outbox backlog
     private static final String OUTBOX_BACKLOG_GAUGE_NAME = "vendor.assignment.outbox.backlog.size";
+    // Counter for notification requests
+    private static final String NOTIFICATION_REQUEST_COUNTER_NAME = "vendor.assignment.notification.requests";
+
 
     private final AtomicLong outboxBacklog = new AtomicLong(0);
 
@@ -39,9 +43,15 @@ public class MetricsService {
         );
 
         // Initialize other event counters (e.g., reassign is not a status but an action)
-        Counter.builder(STATUS_CHANGE_COUNTER_NAME) // Using same base name, different tag
-            .tag("action", "reassigned")
+        Counter.builder(ACTION_COUNTER_NAME)
+            .tag("type", "reassigned")
             .description("Counts the number of times vendor assignments have been reassigned.")
+            .register(meterRegistry);
+
+        // Initialize counter for shipment notification requests
+        Counter.builder(NOTIFICATION_REQUEST_COUNTER_NAME)
+            .tag("type", "shipment_confirmation")
+            .description("Counts the number of shipment confirmation notifications requested.")
             .register(meterRegistry);
 
         // Gauge for outbox backlog size
@@ -55,7 +65,11 @@ public class MetricsService {
     }
 
     public void incrementReassignmentCounter() {
-        meterRegistry.counter(STATUS_CHANGE_COUNTER_NAME, "action", "reassigned").increment();
+        meterRegistry.counter(ACTION_COUNTER_NAME, "type", "reassigned").increment();
+    }
+
+    public void incrementShipmentNotificationRequestedCounter() {
+        meterRegistry.counter(NOTIFICATION_REQUEST_COUNTER_NAME, "type", "shipment_confirmation").increment();
     }
 
     // This method would be called periodically by a scheduler or triggered by outbox poller.
