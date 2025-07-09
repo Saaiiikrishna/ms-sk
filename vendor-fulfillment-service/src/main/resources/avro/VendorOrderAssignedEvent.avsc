@@ -1,0 +1,54 @@
+{
+  "namespace": "com.ecommerce.vendorfulfillmentservice.event.avro",
+  "type": "record",
+  "name": "VendorOrderAssignedEvent",
+  "doc": "Event emitted when an order is assigned to a vendor.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "Unique ID for this event."
+    },
+    {
+      "name": "assignmentId",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "The ID of the vendor order assignment."
+    },
+    {
+      "name": "orderId",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "The ID of the customer order."
+    },
+    {
+      "name": "vendorId",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "The ID of the assigned vendor."
+    },
+    {
+      "name": "timestamp",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "Timestamp when the event occurred (epoch milliseconds)."
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "doc": "The status of the assignment, should be ASSIGNED for this event."
+    }
+    // No trackingNo for this initial assignment event.
+  ]
+}
