@@ -329,7 +329,26 @@ public class VendorAssignmentService {
                 .build();
         createAndSaveOutboxEvent(savedAssignment, event, VendorOrderShippedEvent.class.getSimpleName());
 
-        log.info("Order assignment {} marked as SHIPPED by vendor {} with tracking_no {}",
+        // Also create and save a ShipmentNotificationRequestedEvent
+        // Assuming customerId needs to be fetched or is not directly on assignment.
+        // For now, passing null for customerId. A real implementation might get it from the order details
+        // or the original OrderReservationSucceededEvent if that data was persisted on the assignment.
+        UUID customerIdForNotification = null; // Placeholder
+
+        ShipmentNotificationRequestedEvent notificationEvent = ShipmentNotificationRequestedEvent.newBuilder()
+                .setEventId(UUID.randomUUID().toString())
+                .setAssignmentId(savedAssignment.getId().toString())
+                .setOrderId(savedAssignment.getOrderId().toString())
+                .setVendorId(savedAssignment.getVendorId().toString())
+                .setTrackingNo(savedAssignment.getTrackingNo())
+                .setCustomerId(customerIdForNotification == null ? null : customerIdForNotification.toString())
+                .setNotificationType("CUSTOMER_SHIPMENT_CONFIRMATION") // Example type
+                .setTimestamp(Instant.now().toEpochMilli())
+                .build();
+        createAndSaveOutboxEvent(savedAssignment, notificationEvent, ShipmentNotificationRequestedEvent.class.getSimpleName());
+        metricsService.incrementShipmentNotificationRequestedCounter();
+
+        log.info("Order assignment {} marked as SHIPPED by vendor {} with tracking_no {}. Shipment notification requested.",
                 assignmentId, savedAssignment.getVendorId(), trackingNo);
         return savedAssignment;
     }
