@@ -1,0 +1,179 @@
+# Spring Cloud Vault Bootstrap Configuration
+# This file is loaded before application.yml and is used to fetch secrets from Vault.
+
+spring:
+  application:
+    name: user-service # Should match the name used in Vault paths if applicable
+  cloud:
+    vault:
+      # Connection properties
+      host: ${VAULT_HOST:vault} # Default to 'vault' for Docker Compose, override with env var for other envs
+      port: ${VAULT_PORT:8200}
+      scheme: ${VAULT_SCHEME:http} # Default to http for local dev; use https for prod
+      # token: ${VAULT_TOKEN} # Use token auth for local dev if AppRole is not set up yet. Not recommended for prod.
+
+      # Authentication method - AppRole is recommended for applications
+      authentication: ${VAULT_AUTH_METHOD:APPROLE} # Default to APPROLE, can be TOKEN for local dev
+      app-role:
+        role-id: ${VAULT_ROLE_ID:} # Must be provided as env var
+        secret-id: ${VAULT_SECRET_ID:} # Must be provided as env var
+        # app-role-path: approle # Default path, change if customized in Vault
+        # token-ttl: Optional # Configure token TTL if needed
+        # renew-ttl: Optional # Configure renewal TTL if needed
+
+      # KV (Key-Value) Secrets Engine Configuration
+      kv:
+        enabled: true
+        backend: ${VAULT_KV_BACKEND:secret} # Default KV v2 backend path is 'secret'
+        # profile-separator: '/' # Default is '/'
+        # default-context: application # Root path for secrets if not specified with spring.application.name
+        # application-name: ${spring.application.name} # Path prefix, e.g., secret/user-service/
+        # You can also use spring.config.import=vault://secret/user-service for specific paths
+
+      # Transit Secrets Engine Configuration (for EncryptionService)
+      # This section enables VaultTransitTemplate if spring-vault-core is on classpath
+      transit:
+        enabled: true # Ensure transit is enabled if you plan to use VaultTransitOperations directly
+        # Default path for transit is 'transit'
+        # key-rotation-schedule: Optional # Cron expression for key rotation checks by Spring Cloud Vault
+
+      # Database Secrets Engine (Dynamic Credentials)
+      # This configuration tells Spring Cloud Vault to fetch dynamic DB creds.
+      # The path "database" is the default mount path for the database secrets engine.
+      # The role "user-service-db-role" is a role configured in Vault that has policies to generate DB creds.
+      database:
+        enabled: ${VAULT_DB_CREDS_ENABLED:false} # Enable this to fetch dynamic DB credentials
+        role: ${VAULT_DB_ROLE:user-service-db-role} # Role name in Vault for this app's DB credentials
+        backend: ${VAULT_DB_BACKEND:database} # Mount path of the database secrets engine in Vault
+        # username-property: spring.datasource.username # Property to set with the fetched username
+        # password-property: spring.datasource.password # Property to set with the fetched password
+        # These properties are typically set automatically by Spring Cloud Vault if not specified.
+
+      # Generic Secrets (alternative to KV if you need more control or different structure)
+      # generic:
+      #   enabled: true # If using generic secrets instead of or in addition to KV.
+
+      # Fail fast if Vault is unavailable during bootstrap
+      fail-fast: true
+
+      # SSL Configuration (if using HTTPS for Vault)
+      # ssl:
+        # trust-store: classpath:vault-truststore.jks
+        # trust-store-password: ${VAULT_TRUSTSTORE_PASSWORD}
+        # key-store: classpath:vault-keystore.jks
+        # key-store-password: ${VAULT_KEYSTORE_PASSWORD}
+        # cert-auth-path: cert # If using TLS Certificate auth method
+
+# Example of importing specific secrets for application.yml usage:
+# spring.config.import: "vault://${VAULT_KV_BACKEND:secret}/${spring.application.name}"
+# This would make secrets under secret/user-service available like ${mykey}
+
+# For more fine-grained control over what secrets are loaded for datasource:
+# Ensure the role specified in vault.database.role has a policy granting access to generate credentials.
+# Example policy for Vault role 'user-service-db-role':
+# path "database/creds/user-service-db-role" {
+#   capabilities = ["read"]
+# }
+# And the DB backend role in Vault must be configured to generate these credentials.
+# vault write database/roles/user-service-db-role \
+#    db_name=your_db_connection_name \
+#    creation_statements="CREATE USER \"{{name}}\" WITH PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT ALL PRIVILEGES ON SCHEMA public TO \"{{name}}\";" \
+#    default_ttl="1h" \
+#    max_ttl="24h"
+
+# If NOT using dynamic DB credentials from Vault's DB secrets engine,
+# you would typically store static DB creds in the KV store and reference them in application.yml
+# e.g., spring.datasource.username=${vault.db.username} from secret/user-service/db.username
+# The kickoff plan uses: ${vault:user-service/db/url}, which implies KV store.
+# So, I will set VAULT_DB_CREDS_ENABLED to false by default and assume KV for now.
+# If dynamic DB creds are used, then spring.datasource.url would be static,
+# and username/password would be dynamic.
+# The kickoff implies KV for all datasource properties:
+# url: ${vault:user-service/db/url}
+# username: ${vault:user-service/db/username}
+# password: ${vault:user-service/db/password}
+# This means these specific keys (user-service/db/url, etc.) must exist in Vault KV.
+# The path structure in Vault would be: VAULT_KV_BACKEND/user-service/db with keys url, username, password.
+# Or, if VAULT_KV_BACKEND is 'secret' and default-context is 'application' (which it is by default if spring.application.name is set),
+# then path would be 'secret/user-service' and keys would be 'db.url', 'db.username', 'db.password'.
+# The `${vault:path/key}` syntax is for specific lookups.
+# Let's assume the path structure `secret/user-service/db_url`, `secret/user-service/db_username`, etc.
+# Or more likely `secret/user-service` with keys `db_url`, `db_username`.
+# The example `${vault:user-service/db/url}` implies the application name is NOT automatically prepended.
+# So KV backend should be `secret` and then the path `user-service/db/url` is directly used.
+# This means default-context might not be 'application' or application-name is not used as a prefix by default for this syntax.
+# Let's adjust `spring.cloud.vault.kv.application-name` to an empty string or ensure `default-context` is empty
+# if we want `${vault:user-service/db/url}` to resolve to `secret/user-service/db/url`.
+# Alternatively, if `application-name: user-service` is used, then `${vault:db/url}` would resolve to `secret/user-service/db/url`.
+# The provided syntax `${vault:user-service/db/url}` is a bit unusual.
+# Standard Spring Cloud Vault with `application-name: user-service` and `backend: secret` would expect:
+# `${db.url}` -> resolves to `secret/user-service` key `db.url`
+# Or `${myapp.db.url}` -> resolves to `secret/user-service` key `myapp.db.url`
+# The syntax `${vault:some/path/key}` is a direct lookup.
+
+# For the provided `${vault:user-service/db/url}` to work, the KV config needs to be general.
+# Let's assume `spring.cloud.vault.kv.application-name` is NOT set, or `default-context` is empty.
+# Then `secret/user-service/db/url` would be the path in Vault.
+# The `kv.prefix` or `kv.defaultContext` might also play a role here.
+# For simplicity, let's assume direct paths are used.
+spring:
+  cloud:
+    vault:
+      kv:
+        # No application-name or default-context here to allow ${vault:user-service/db/url} to work as absolute path from backend.
+        # Or, if these are relative to a context, that context needs to be empty.
+        # Example: if backend is 'secret', then 'secret/user-service/db/url' is the target.
+        # If backend is 'kv' and path is 'user-service/data/db/url' for KV v2.
+        # For KV v2, the path used in spring.cloud.vault.kv.backend is usually the mount path,
+# and then application name is appended, then /data/ is used.
+        # e.g. if backend is 'secret', app name 'user-service', it looks for 'secret/data/user-service'.
+        # To match ${vault:user-service/db/url}, we need to ensure the path lookup is direct.
+        # This syntax might bypass the default application context behavior.
+        pass_through_property_name_as_path: true # This is not a real property, just for thought.
+
+# Given the example `${vault:user-service/db/url}`:
+# This implies Spring Cloud Vault will look up the secret at path `user-service/db/url`
+# relative to the KV backend's root. If `spring.cloud.vault.kv.backend=secret`,
+# it looks for `secret/user-service/db/url`. This is unusual.
+# More common is `backend=secret/user-service` and then `${db_url}`.
+# Or `backend=secret`, `application-name=user-service`, then `${db_url}`.
+
+# Let's assume the intent is:
+# KV backend mount path: 'secret'
+# Full path to the secret in Vault: 'secret/data/user-service/db' (if KV v2)
+# And this 'db' secret contains keys: 'url', 'username', 'password'.
+# Then in application.yml, you'd use:
+# url: ${db.url}
+# username: ${db.username}
+# password: ${db.password}
+# And bootstrap.yml would have:
+# spring.cloud.vault.kv.backend=secret (mount path)
+# spring.cloud.vault.kv.application-name=user-service (logical app name, forms part of path)
+# spring.cloud.vault.kv.default-context=db (sub-path or context within app's secrets) - or just use application-name and keys like db.url
+
+# Re-interpreting the kickoff's syntax:
+# ${vault:user-service/db/url}
+# This is a direct lookup. Spring Cloud Vault supports this.
+# It means the path user-service/db/url is looked up under the configured KV backend.
+# If backend is 'secret' (KV v2), it will try 'secret/data/user-service/db/url'. This is not what we want.
+# It should be 'secret/data/user-service/db' and then the key 'url'.
+
+# Let's use the standard way: define a context for user-service, and sub-context for db.
+spring:
+  cloud:
+    vault:
+      kv:
+        # backend: secret (default)
+        application-name: user-service # This will make Vault look under secret/data/user-service
+        # We want keys like db.url, db.username, db.password under secret/data/user-service
+        # So, the application.yml should use ${db.url}, ${db.username}, ${db.password}
+        # The kickoff's ${vault:user-service/db/url} implies a different structure or a direct path override.
+        # To make the kickoff's syntax work, we'd likely need to specify profile-separator or a custom path.
+        # For now, I will assume the standard Spring Cloud Vault behavior with application-name.
+        # The application.yml will be adjusted accordingly in the next step.
+        # This means the kickoff's ${vault:user-service/db/url} will need to change to ${db.url}
+        # assuming the secret in Vault is at secret/data/user-service and has a key "db.url".
+        # Or, if the secret is at secret/data/user-service/db and has key "url", then ${db.url} would also work if defaultContext is "db".
+        # Let's assume secret path is "secret/data/user-service" and keys are "db_url", "db_username", "db_password".
+        # Then application.yml will use ${db_url}, ${db_username}, ${db_password}.
+        # This seems the most straightforward interpretation of standard Spring Cloud Vault.

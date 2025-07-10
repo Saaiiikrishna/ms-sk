@@ -3,8 +3,8 @@ spring:
     name: auth-service
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:authdb} # Added DB_PORT and DB_NAME for more flexibility
-    username: ${DB_USER:authuser} # Changed default to authuser
-    password: ${DB_PASS:authpassword} # Changed default to authpassword
+    username: ${DB_USER:postgres} # Changed default to postgres
+    password: ${DB_PASS:0000} # Changed default to 0000
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -19,16 +19,21 @@ spring:
   #   change-log: classpath:/db/changelog/db.changelog-master.yaml
   #   enabled: true
 
+
+
+# Keycloak configuration for admin client operations
 keycloak:
-  realm: MySillyDreams-Realm
-  auth-server-url: ${KEYCLOAK_URL:http://localhost:8080/auth} # PRD uses /auth, Keycloak official docs often use /realms
-  resource: auth-service-client # This is the Client ID
-  credentials:
-    secret: ${KEYCLOAK_SECRET:dummysecret} # Placeholder, MUST be overridden by env var or K8s secret
-  bearer-only: false # This service will have interactive login via /auth/login, so not bearer-only
-  ssl-required: external # 'none' for local dev without SSL, 'external' or 'all' for prod
-  # principal-attribute: preferred_username # or sub, email etc.
-  # use-resource-role-mappings: true # If you map client roles to JWT instead of realm roles
+  realm: ${KEYCLOAK_REALM:mysillydreams}
+  auth-server-url: ${KEYCLOAK_URL:http://keycloak:8080}
+  server-url: ${KEYCLOAK_SERVER_URL:http://keycloak:8080}
+  admin-client:
+    client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:admin-cli}
+    client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET:}
+    username: ${KEYCLOAK_ADMIN_USERNAME:admin}
+    password: ${KEYCLOAK_ADMIN_PASSWORD:admin123}
+  admin:
+    username: ${KEYCLOAK_ADMIN_USERNAME:admin}
+    password: ${KEYCLOAK_ADMIN_PASSWORD:admin123}
 
 kafka:
   bootstrap-servers: ${KAFKA_BROKER:localhost:9092}
@@ -53,7 +58,7 @@ jwt:
 
 
 server:
-  port: 8080
+  port: 8081
   # For graceful shutdown
   shutdown: graceful
   # If behind a proxy, configure forwarded headers
@@ -63,16 +68,37 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus # Expose health, info, and prometheus (if micrometer-registry-prometheus is added)
+        include: "*"
   endpoint:
     health:
-      show-details: when_authorized # Or "always" during dev, "never" for prod if sensitive
-      # Probes can be enabled for Kubernetes
+      show-details: always
+      show-components: always
       probes:
         enabled: true
-  # metrics: # Example for Prometheus if added
-    # tags:
-      # application: ${spring.application.name}
+    info:
+      enabled: true
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  info:
+    env:
+      enabled: true
+    java:
+      enabled: true
+    os:
+      enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://zipkin:9411/api/v2/spans}
 
 logging:
   level:
@@ -90,6 +116,18 @@ app:
     # MUST be overridden with a strong, randomly generated key in production (16, 24, or 32 bytes for AES-128/192/256).
     # Example: openssl rand -hex 32
     secret-key: ${APP_SIMPLE_ENCRYPTION_SECRET_KEY:DefaultP@ssw0rdForSimpleEncryptNeedsToBe32BytesLong!}
+
+  # MFA Configuration
+  mfa:
+    issuer-name: ${APP_MFA_ISSUER_NAME:MySillyDreamsPlatform}
+
+  # Internal API Configuration
+  internal-api:
+    secret-key: ${APP_INTERNAL_API_SECRET_KEY:ChangeThisInternalApiSecretKeyForProduction123456789!}
+
+  # Bootstrap Configuration
+  bootstrap:
+    enabled: ${APP_BOOTSTRAP_ENABLED:true} # Set to false after first admin is created
 
 
 # Default Spring profiles
@@ -146,3 +184,32 @@ spring:
 #   username: ${KEYCLOAK_ADMIN_USERNAME} # If using user credentials
 #   password: ${KEYCLOAK_ADMIN_PASSWORD}
 #   grant-type: client_credentials # Or password
+
+# Eureka Client Configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+
+# Redis Configuration
+spring.data.redis:
+  host: ${REDIS_HOST:redis}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  database: 0
+  timeout: 2000ms
+  lettuce:
+    pool:
+      max-active: 8
+      max-idle: 8
+      min-idle: 0
+
+# Spring Boot Admin Configuration
+spring.boot.admin.client:
+  url: ${SPRING_BOOT_ADMIN_CLIENT_URL:http://admin-server:8080}
+  instance:
+    name: auth-service
+    service-url: ${SPRING_BOOT_ADMIN_CLIENT_SERVICE_URL:http://auth-service:8081}

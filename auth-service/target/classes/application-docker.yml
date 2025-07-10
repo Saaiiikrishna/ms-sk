@@ -1,0 +1,122 @@
+spring:
+  application:
+    name: auth-service
+  
+  # Database configuration for Docker
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:authdb}
+    username: ${DB_USER:authuser}
+    password: ${DB_PASS:authpass123}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  
+  jpa:
+    hibernate:
+      ddl-auto: update # Use update for Docker to create tables automatically
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+  
+  # Kafka configuration for Docker
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKER:kafka:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: auth-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+# Keycloak configuration for Docker
+keycloak:
+  realm: MySillyDreams-Realm
+  auth-server-url: ${KEYCLOAK_URL:http://keycloak:8080/auth}
+  resource: auth-service-client
+  credentials:
+    secret: ${KEYCLOAK_SECRET:your-keycloak-client-secret}
+  bearer-only: false
+  ssl-required: none # For Docker testing only
+  use-resource-role-mappings: true
+  principal-attribute: preferred_username
+
+# JWT configuration
+jwt:
+  secret: ${JWT_SECRET:TestJwtSecretKeyForDockerTestingMinimum256BitsLong123456789!}
+  expiration-ms: 3600000 # 1 hour
+
+# Application specific properties
+app:
+  simple-encryption:
+    secret-key: ${APP_SIMPLE_ENCRYPTION_SECRET_KEY:TestEncryptionKeyForDockerTesting123456789!}
+  
+  mfa:
+    issuer-name: ${APP_MFA_ISSUER_NAME:MySillyDreamsPlatform}
+  
+  internal-api:
+    secret-key: ${APP_INTERNAL_API_SECRET_KEY:TestInternalApiKeyForDockerTesting123456789!}
+  
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001,http://localhost:8080}
+
+# Logging configuration for Docker
+logging:
+  level:
+    root: ${LOGGING_LEVEL_ROOT:INFO}
+    com.mysillydreams.auth: ${LOGGING_LEVEL_COM_MYSILLYDREAMS_AUTH:DEBUG}
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Management endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+# Server configuration
+server:
+  port: 8080
+  shutdown: graceful
+  tomcat:
+    connection-timeout: 20000
+    max-connections: 8192
+    threads:
+      max: 200
+      min-spare: 10
+
+# Spring Boot Actuator
+info:
+  app:
+    name: 'auth-service'
+    description: 'Authentication Service for MySillyDreams Platform'
+    version: '0.0.1-SNAPSHOT'
+    encoding: 'UTF-8'
+    java:
+      version: '21.0.7'

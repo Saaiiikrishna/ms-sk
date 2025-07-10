@@ -84,7 +84,7 @@ public class AdminController {
     @GetMapping("/users")
     public ResponseEntity<Page<UserDto>> listActiveUsers(Pageable pageable) {
         logger.info("Admin request to list active users. Page: {}, Size: {}", pageable.getPageNumber(), pageable.getPageSize());
-        Page<UserDto> userDtoPage = userService.listActiveUsers(pageable).map(UserDto::from); // Map Page<UserEntity> to Page<UserDto>
+        Page<UserDto> userDtoPage = userService.listActiveUsers(pageable); // Service already returns Page<UserDto>
         return ResponseEntity.ok(userDtoPage);
     }
 
@@ -113,8 +113,8 @@ public class AdminController {
             @Parameter(description = "UUID of the user to retrieve.", required = true) @PathVariable UUID userId) {
         logger.info("Admin request to get user by ID (including archived): {}", userId);
         try {
-            UserEntity userEntity = userService.getUserByIdIncludingArchived(userId);
-            return ResponseEntity.ok(UserDto.from(userEntity));
+            UserDto userDto = userService.getUserByIdIncludingArchived(userId);
+            return ResponseEntity.ok(userDto);
         } catch (EntityNotFoundException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
         }
@@ -132,9 +132,11 @@ public class AdminController {
             @Parameter(description = "UUID of the user to soft-delete.", required = true) @PathVariable UUID userId) {
         logger.info("Admin request to soft-delete user by ID: {}", userId);
         try {
-            UserEntity userToSoftDelete = userService.getUserByIdIncludingArchived(userId); // Fetch by UUID
-            UserEntity softDeletedUser = userService.softDeleteUserByReferenceId(userToSoftDelete.getReferenceId()); // Soft delete by Ref ID
-            return ResponseEntity.ok(UserDto.from(softDeletedUser));
+            UserDto userToSoftDelete = userService.getUserByIdIncludingArchived(userId); // Fetch by UUID
+            userService.softDeleteUserByReferenceId(userToSoftDelete.getReferenceId()); // Soft delete by Ref ID (void method)
+            // Return the user DTO with updated status
+            UserDto updatedUser = userService.getUserByIdIncludingArchived(userId);
+            return ResponseEntity.ok(updatedUser);
         } catch (EntityNotFoundException e) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage(), e);
         }

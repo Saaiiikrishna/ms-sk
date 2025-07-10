@@ -9,8 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
+import java.util.concurrent.CompletableFuture;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -61,7 +60,7 @@ public class InventoryKafkaClient {
         logger.info("Publishing InventoryItemCreated event for ItemId: {}, SKU: {}, Topic: {}",
                 item.getId(), item.getSku(), itemCreatedTopic);
 
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(itemCreatedTopic, item.getId().toString(), payload);
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(itemCreatedTopic, item.getId().toString(), payload);
         addKafkaCallback(future, "InventoryItemCreated", item.getId().toString());
     }
 
@@ -93,26 +92,22 @@ public class InventoryKafkaClient {
         logger.info("Publishing InventoryStockAdjusted event for ItemId: {}, SKU: {}, TransactionType: {}, Topic: {}",
                 item.getId(), item.getSku(), transaction.getType(), stockAdjustedTopic);
 
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(stockAdjustedTopic, item.getId().toString(), payload);
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(stockAdjustedTopic, item.getId().toString(), payload);
         addKafkaCallback(future, "InventoryStockAdjusted", item.getId().toString());
     }
 
-    private void addKafkaCallback(ListenableFuture<SendResult<String, Object>> future, String eventType, String recordKey) {
-        future.addCallback(new ListenableFutureCallback<>() {
-            @Override
-            public void onSuccess(SendResult<String, Object> result) {
+    private void addKafkaCallback(CompletableFuture<SendResult<String, Object>> future, String eventType, String recordKey) {
+        future.whenComplete((result, ex) -> {
+            if (ex == null) {
                 logger.info("Successfully published '{}' event for Key: {}. Topic: {}, Partition: {}, Offset: {}",
                         eventType,
                         recordKey,
                         result.getRecordMetadata().topic(),
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
-            }
-
-            @Override
-            public void onFailure(Throwable ex) {
-                logger.error("Failed to publish '{}' event for Key: {}. Topic: {}",
-                        eventType, recordKey, future.isDone() ? "N/A (future already done)" : ex.getMessage(), ex);
+            } else {
+                logger.error("Failed to publish '{}' event for Key: {}. Error: {}",
+                        eventType, recordKey, ex.getMessage(), ex);
                  // In a real app, consider retry, DLQ, or more robust error handling.
             }
         });

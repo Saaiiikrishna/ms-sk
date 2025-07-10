@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mysillydreams
+  labels:
+    name: mysillydreams
+    environment: development

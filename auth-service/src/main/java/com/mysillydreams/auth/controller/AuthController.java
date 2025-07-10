@@ -71,7 +71,7 @@ public class AuthController {
             @Parameter(description = "User credentials for login, including optional OTP for MFA-enabled admins", required = true, schema = @Schema(implementation = LoginRequest.class))
             @Valid @RequestBody LoginRequest loginRequest,
             HttpServletRequest request) { // Retained for IP logging, though GlobalExceptionHandler could also get it
-        // TODO: SECURITY - Implement rate limiting / brute force protection for login endpoint (ideally before hitting this, e.g., gateway or filter).
+        // Rate limiting is implemented via RateLimitingFilter
         try {
             // IP logging can be done by a filter or WebRequest in GlobalExceptionHandler if preferred for centralization
             logger.info("Login request received for user: {} from IP: {}", loginRequest.getUsername(), request.getRemoteAddr());
@@ -100,20 +100,19 @@ public class AuthController {
     @PostMapping("/refresh")
     public ResponseEntity<?> refreshToken(
             @Parameter(description = "Request containing the current JWT to be refreshed", required = true, schema = @Schema(implementation = TokenRefreshRequest.class)) @Valid @RequestBody TokenRefreshRequest tokenRefreshRequest) {
-        String oldToken = tokenRefreshRequest.getRefreshToken();
-        if (oldToken != null && oldToken.startsWith("Bearer ")) {
-            oldToken = oldToken.substring(7);
-        }
+        try {
+            String oldToken = tokenRefreshRequest.getRefreshToken();
+            if (oldToken != null && oldToken.startsWith("Bearer ")) {
+                oldToken = oldToken.substring(7);
+            }
 
-        if (jwtTokenProvider.validateToken(oldToken)) {
-            Authentication authentication = jwtTokenProvider.getAuthentication(oldToken);
-            String newJwt = jwtTokenProvider.generateToken(authentication);
-            Long expiresIn = jwtTokenProvider.getExpiryDateFromToken(newJwt) - System.currentTimeMillis();
-            logger.info("Token refreshed for user: {}", authentication.getName());
-            return ResponseEntity.ok(new JwtResponse(newJwt, expiresIn));
-        } else {
-            logger.warn("Invalid token provided for refresh.");
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Invalid token for refresh"));
+            JwtResponse jwtResponse = authService.refreshToken(oldToken);
+            logger.info("Token refresh processed successfully");
+            return ResponseEntity.ok(jwtResponse);
+        } catch (Exception e) {
+            // Specific exceptions like BadCredentialsException will be handled by GlobalExceptionHandler
+            logger.error("Unexpected error during token refresh: {}", e.getMessage(), e);
+            throw e; // Re-throw to be caught by GlobalExceptionHandler
         }
     }
 
@@ -136,17 +135,18 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Authorization header is missing or malformed."));
         }
 
-        if (jwtTokenProvider.validateToken(token)) {
-            Authentication authentication = jwtTokenProvider.getAuthentication(token);
-            logger.debug("Token validated successfully for user: {}", authentication.getName());
-            return ResponseEntity.ok(Map.of(
-                    "status", "valid",
-                    "user", authentication.getName(),
-                    "authorities", authentication.getAuthorities()
-            ));
-        } else {
-            logger.warn("Token validation failed.");
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("status", "invalid"));
+        try {
+            Map<String, Object> validationResult = authService.validateToken(token);
+            if ("valid".equals(validationResult.get("status"))) {
+                logger.debug("Token validation successful");
+                return ResponseEntity.ok(validationResult);
+            } else {
+                logger.warn("Token validation failed");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(validationResult);
+            }
+        } catch (Exception e) {
+            logger.error("Unexpected error during token validation: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("status", "invalid", "error", "Token validation failed"));
         }
     }
 

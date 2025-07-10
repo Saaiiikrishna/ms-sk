@@ -68,6 +68,16 @@ public class GlobalExceptionHandler {
     }
 
 
+    @ExceptionHandler(MfaAuthenticationRequiredException.class)
+    public ResponseEntity<Object> handleMfaAuthenticationRequired(MfaAuthenticationRequiredException ex, WebRequest request) {
+        Map<String, Object> body = new HashMap<>();
+        body.put(ERROR_KEY, "MFA authentication required");
+        body.put("mfaRequired", true);
+        body.put(MESSAGE_KEY, ex.getMessage());
+        logger.warn("MFA authentication required for request {}: {}", request.getDescription(false), ex.getMessage());
+        return new ResponseEntity<>(body, HttpStatus.UNAUTHORIZED);
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<Object> handleBadCredentials(BadCredentialsException ex, WebRequest request) {
         Map<String, Object> body = new HashMap<>();

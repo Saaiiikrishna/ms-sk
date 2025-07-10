@@ -1,13 +1,12 @@
 package com.mysillydreams.userservice.converter;
 
-import com.mysillydreams.userservice.service.EncryptionService;
+import com.mysillydreams.userservice.service.EncryptionServiceInterface;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.vault.VaultException;
 
 /**
  * JPA AttributeConverter to automatically encrypt and decrypt String entity attributes.
@@ -28,12 +27,12 @@ import org.springframework.vault.VaultException;
 public class CryptoConverter implements AttributeConverter<String, String> {
 
     private static final Logger logger = LoggerFactory.getLogger(CryptoConverter.class);
-    private static EncryptionService encryptionService;
+    private static EncryptionServiceInterface encryptionService;
 
     // Static setter method for Spring to inject the EncryptionService.
     // This method will be called by Spring after the CryptoConverter bean is created.
     @Autowired
-    public void setEncryptionService(EncryptionService service) {
+    public void setEncryptionService(EncryptionServiceInterface service) {
         if (CryptoConverter.encryptionService == null) {
             CryptoConverter.encryptionService = service;
             logger.info("EncryptionService statically injected into CryptoConverter.");
@@ -61,7 +60,7 @@ public class CryptoConverter implements AttributeConverter<String, String> {
         }
         try {
             return encryptionService.encrypt(attribute);
-        } catch (VaultException e) {
+        } catch (Exception e) {
             logger.error("Encryption failed during convertToDatabaseColumn: {}", e.getMessage(), e);
             // Handle encryption failure: re-throw, or return a specific marker, or null.
             // Re-throwing will typically roll back the transaction.
@@ -80,7 +79,7 @@ public class CryptoConverter implements AttributeConverter<String, String> {
         }
         try {
             return encryptionService.decrypt(dbData);
-        } catch (VaultException e) {
+        } catch (Exception e) {
             logger.error("Decryption failed during convertToEntityAttribute: {}", e.getMessage(), e);
             // Handle decryption failure. Re-throwing will typically prevent entity loading or cause issues.
             // Depending on the application's requirements, you might return null, a marker string,

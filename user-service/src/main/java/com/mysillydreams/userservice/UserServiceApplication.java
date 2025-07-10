@@ -4,14 +4,19 @@ import com.mysillydreams.userservice.converter.CryptoConverter; // Import to ref
 import com.mysillydreams.userservice.service.EncryptionService; // Import to reference
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration;
+import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing; // For @CreationTimestamp etc.
-import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity; // Added
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity; // Updated for Spring Boot 3.x
 
-@SpringBootApplication
+@SpringBootApplication(exclude = {RedisRepositoriesAutoConfiguration.class})
+@EnableDiscoveryClient
 @EnableJpaAuditing // To enable @CreationTimestamp and @UpdateTimestamp in entities
-@EnableGlobalMethodSecurity(prePostEnabled = true, jsr250Enabled = true) // Enable method security
+@EnableMethodSecurity(prePostEnabled = true, jsr250Enabled = true) // Enable method security
+@EnableJpaRepositories(basePackages = "com.mysillydreams.userservice.repository")
 public class UserServiceApplication {
 
     public static void main(String[] args) {

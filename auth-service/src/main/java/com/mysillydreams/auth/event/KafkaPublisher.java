@@ -6,10 +6,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
-
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @Component
 public class KafkaPublisher {
@@ -48,21 +46,17 @@ public class KafkaPublisher {
      */
     public void publishEvent(String topic, String messageKey, String eventKey, Object payload) {
         logger.info("Attempting to publish event '{}' with key '{}' to topic '{}'", eventKey, messageKey, topic);
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(topic, messageKey, payload);
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(topic, messageKey, payload);
 
-        future.addCallback(new ListenableFutureCallback<>() {
-            @Override
-            public void onSuccess(SendResult<String, Object> result) {
+        future.whenComplete((result, ex) -> {
+            if (ex == null) {
                 logger.info("Successfully published event '{}' with key '{}' to topic '{}', partition {}, offset {}",
                         eventKey,
                         messageKey,
                         topic,
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
-            }
-
-            @Override
-            public void onFailure(Throwable ex) {
+            } else {
                 logger.error("Failed to publish event '{}' with key '{}' to topic '{}'",
                         eventKey, messageKey, topic, ex);
                 // Implement retry mechanisms or dead-letter queue (DLQ) handling here if necessary

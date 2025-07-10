@@ -1,6 +1,7 @@
 package com.mysillydreams.userservice.dto;
 
 import com.mysillydreams.userservice.domain.UserEntity;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 

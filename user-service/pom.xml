@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>2.7.5</version> <!-- As specified in kickoff -->
+        <version>3.2.0</version> <!-- Updated to match auth-service -->
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.mysillydreams</groupId>
@@ -16,8 +16,7 @@
 
     <properties>
         <java.version>17</java.version>
-        <spring-cloud.version>2021.0.6</spring-cloud.version> <!-- As specified -->
-        <!-- Testcontainers version, align with auth-service or use latest -->
+        <spring-cloud.version>2023.0.0</spring-cloud.version> <!-- Updated for Spring Boot 3.2.x -->
         <testcontainers.version>1.19.3</testcontainers.version>
     </properties>
 
@@ -39,6 +38,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
 
         <!-- PostgreSQL Driver -->
         <dependency>
@@ -52,17 +59,10 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-vault-config</artifactId>
         </dependency>
-        <!-- spring-cloud-vault-core is typically a transitive dependency of spring-cloud-starter-vault-config -->
-        <!-- Explicitly adding if needed, but usually not required. -->
-        <!-- <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-vault-core</artifactId>
-        </dependency> -->
-         <dependency> <!-- Needed for Vault Transit operations -->
+        <dependency>
             <groupId>org.springframework.vault</groupId>
             <artifactId>spring-vault-core</artifactId>
         </dependency>
-
 
         <!-- Spring Kafka -->
         <dependency>
@@ -77,15 +77,46 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- JAXB API and Runtime for older JDKs with Spring Boot 2.7.x if certain XML bindings are needed indirectly -->
-        <!-- Usually not strictly required for this setup but can resolve some transitive issues with Vault/AWS SDKs -->
+        <!-- AWS SDK for S3 -->
         <dependency>
-            <groupId>jakarta.xml.bind</groupId>
-            <artifactId>jakarta.xml.bind-api</artifactId>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+        </dependency>
+
+        <!-- OpenAPI / Swagger Documentation -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.2.0</version> <!-- Updated for Spring Boot 3.x -->
+        </dependency>
+
+        <!-- Eureka Client for Service Discovery -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
+
+        <!-- Redis for Caching -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Zipkin for Distributed Tracing -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.glassfish.jaxb</groupId>
-            <artifactId>jaxb-runtime</artifactId>
+            <groupId>io.zipkin.reporter2</groupId>
+            <artifactId>zipkin-reporter-brave</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Admin Client -->
+        <dependency>
+            <groupId>de.codecentric</groupId>
+            <artifactId>spring-boot-admin-starter-client</artifactId>
+            <version>3.2.0</version>
         </dependency>
 
         <!-- Test Dependencies -->
@@ -97,6 +128,11 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -117,25 +153,11 @@
             <version>${testcontainers.version}</version>
             <scope>test</scope>
         </dependency>
-        <dependency> <!-- For Vault testing with Testcontainers -->
+        <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>vault</artifactId>
             <version>${testcontainers.version}</version>
             <scope>test</scope>
-        </dependency>
-
-        <!-- AWS SDK for S3 -->
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>s3</artifactId>
-            <!-- Version managed by Spring Boot's parent or Spring Cloud AWS if used -->
-        </dependency>
-
-        <!-- OpenAPI / Swagger Documentation -->
-        <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-ui</artifactId>
-            <version>1.7.0</version> <!-- Or latest compatible -->
         </dependency>
     </dependencies>
 
@@ -148,17 +170,15 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Add AWS SDK BOM for consistent versions if not using Spring Cloud AWS -->
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>bom</artifactId>
-                <version>2.20.26</version> <!-- Check for a recent version compatible with Spring Boot 2.7.5 -->
+                <version>2.20.26</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>
-
 
     <build>
         <plugins>

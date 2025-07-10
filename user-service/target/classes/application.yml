@@ -1,0 +1,221 @@
+# Main application configuration, loaded after bootstrap.yml
+# Secrets referenced here (like ${db.url}) are expected to be fetched from Vault
+# by Spring Cloud Vault, based on bootstrap.yml configuration.
+# Path in Vault (KV v2): secret/data/user-service
+# Expected keys: db.url, db.username, db.password
+
+spring:
+  application:
+    name: user-service
+
+  datasource:
+    # Simplified configuration for development
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/userdb}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:0000}
+    driver-class-name: org.postgresql.Driver
+    # Connection pool properties (e.g., HikariCP)
+    hikari:
+      connection-timeout: 20000 # milliseconds
+      maximum-pool-size: 10 # Adjust based on expected load
+      idle-timeout: 10000
+      max-lifetime: 600000 # 10 minutes
+      leak-detection-threshold: 15000
+
+
+  jpa:
+    hibernate:
+      ddl-auto: update # IMPORTANT: Use "validate" or "none" in production. Schema changes should be managed by Liquibase/Flyway.
+    show-sql: false # Set to true for debugging, false for production
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true # If show-sql is true
+
+  # Kafka Producer/Consumer Configuration (example)
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false # Avoid __TypeId__ headers
+    # consumer:
+      # group-id: user-service-group # Unique group ID
+      # key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      # properties:
+        # spring.json.trusted.packages: "com.mysillydreams.*" # Or specific packages for deserialization
+
+  # Disable Vault for now to simplify startup
+  cloud:
+    vault:
+      enabled: false
+
+server:
+  port: 8082 # User service on a different port than auth-service (8081)
+
+# Eureka Client Configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+
+# Redis Configuration
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  database: 1  # Different database from auth-service
+  timeout: 2000ms
+  lettuce:
+    pool:
+      max-active: 8
+      max-idle: 8
+      min-idle: 0
+
+# Zipkin Configuration
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://localhost:9411/api/v2/spans}
+
+# Spring Boot Admin Configuration
+spring.boot.admin.client:
+  url: ${SPRING_BOOT_ADMIN_CLIENT_URL:http://localhost:8080}
+  instance:
+    name: user-service
+    service-url: ${SPRING_BOOT_ADMIN_CLIENT_SERVICE_URL:http://localhost:8082}
+
+# Management endpoints for monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+    info:
+      enabled: true
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  info:
+    env:
+      enabled: true
+    java:
+      enabled: true
+    os:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,env,beans,configprops,mappings # Expose more for dev/debug, restrict for prod
+  endpoint:
+    health:
+      show-details: when_authorized # Or "always" for dev
+      probes:
+        enabled: true # For Kubernetes probes
+
+logging:
+  level:
+    root: INFO
+    com.mysillydreams.userservice: DEBUG
+    org.springframework.vault: INFO # Can be DEBUG for Vault troubleshooting
+    org.springframework.cloud.vault: INFO
+    # org.hibernate.SQL: DEBUG # To see SQL
+    # org.hibernate.type.descriptor.sql: TRACE # To see SQL parameters
+
+# S3 Configuration for Vendor Documents
+vendor:
+  s3:
+    bucket: ${VENDOR_DOCS_S3_BUCKET:mysillydreams-vendor-docs} # Default bucket name, override in prod
+    # region: ${AWS_S3_REGION:us-east-1} # Configure if not using default SDK region provider chain
+    # endpoint-override: http://localhost:4566 # For LocalStack testing
+
+# KYC Kafka Topics
+kyc:
+  topic:
+    start: ${KYC_TOPIC_START:kyc.vendor.start.v1}
+    documentUploaded: ${KYC_TOPIC_DOCUMENT_UPLOADED:kyc.vendor.document.uploaded.v1}
+
+# Inventory Kafka Topics
+inventory:
+  topic:
+    itemCreated: ${INVENTORY_TOPIC_ITEM_CREATED:inventory.item.created.v1}
+    stockAdjusted: ${INVENTORY_TOPIC_STOCK_ADJUSTED:inventory.stock.adjusted.v1}
+
+# Delivery S3 & Kafka Topics
+delivery:
+  s3:
+    photo-bucket: ${DELIVERY_PHOTO_S3_BUCKET:${vendor.s3.bucket}} # Defaults to vendor bucket if not specified
+  topic:
+    orderAssigned: ${DELIVERY_TOPIC_ORDER_ASSIGNED:order.assigned.v1}
+    deliveryStatusChanged: ${DELIVERY_TOPIC_STATUS_CHANGED:delivery.status.changed.v1}
+
+# Support Kafka Topics
+support:
+  topic:
+    ticketCreated: ${SUPPORT_TOPIC_TICKET_CREATED:support.ticket.created.v1}
+    ticketUpdated: ${SUPPORT_TOPIC_TICKET_UPDATED:support.ticket.updated.v1}
+
+# User specific events (besides module specific ones)
+user:
+  topic:
+    archived: ${USER_TOPIC_ARCHIVED:user.archived.v1}
+    # created: ${USER_TOPIC_CREATED:user.created.v1} # Placeholder for future
+    # updated: ${USER_TOPIC_UPDATED:user.updated.v1} # Placeholder for future
+
+
+# --- Profile-specific configurations ---
+---
+spring:
+  config:
+    activate:
+      on-profile: kubernetes
+  # Example: Override Vault path for K8s if it's different or uses K8s auth
+  # cloud:
+  #   vault:
+  #     uri: https://vault.default.svc.cluster.local:8200
+  #     authentication: KUBERNETES
+  #     kubernetes:
+  #       role: user-service-role # K8s service account role for Vault
+  #       service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+  jpa:
+    hibernate:
+      ddl-auto: validate # Safer in prod/k8s
+    show-sql: false
+  management:
+    endpoint:
+      health:
+        show-details: never # Hide details in prod
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+  # Test specific properties, e.g. if not using Testcontainers for Vault in some tests
+  # cloud:
+  #   vault:
+  #     enabled: false # Disable Vault for certain unit tests if mocking EncryptionService
+  jpa:
+    hibernate:
+      ddl-auto: create-drop # Common for tests
+    show-sql: true
+  # Kafka test properties usually handled by @EmbeddedKafka or Testcontainers

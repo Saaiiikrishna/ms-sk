@@ -1,54 +1,42 @@
 package com.mysillydreams.auth.service;
 
-import com.mysillydreams.auth.config.SecurityConstants; // Assuming this might be created for ROLE_ADMIN
+import com.mysillydreams.auth.config.SecurityConstants;
 import com.mysillydreams.auth.controller.dto.JwtResponse;
 import com.mysillydreams.auth.controller.dto.LoginRequest;
-import com.mysillydreams.auth.domain.AdminMfaConfig;
+import com.mysillydreams.auth.entity.AdminMfaConfig;
+import com.mysillydreams.auth.exception.MfaAuthenticationRequiredException;
 import com.mysillydreams.auth.repository.AdminMfaConfigRepository;
 import com.mysillydreams.auth.util.JwtTokenProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.oauth2.jwt.Jwt; // If using Jwt as Principal
+ // If using Jwt as Principal
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-
+import java.util.Map;
 import java.util.UUID;
-
-// Custom exception for MFA specific failures during login
-class MfaAuthenticationRequiredException extends BadCredentialsException {
-    public MfaAuthenticationRequiredException(String msg) {
-        super(msg);
-    }
-    public MfaAuthenticationRequiredException(String msg, Throwable cause) {
-        super(msg, cause);
-    }
-}
 
 
 @Service
 public class AuthService {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
-    private static final String ROLE_ADMIN = "ROLE_ADMIN"; // Using literal for now
 
-    private final AuthenticationManager authenticationManager;
+    private final KeycloakAuthenticationService keycloakAuthenticationService;
     private final JwtTokenProvider jwtTokenProvider;
     private final AdminMfaConfigRepository adminMfaConfigRepository;
     private final AdminMfaService adminMfaService; // To verify OTP during login
 
     @Autowired
-    public AuthService(AuthenticationManager authenticationManager,
+    public AuthService(KeycloakAuthenticationService keycloakAuthenticationService,
                        JwtTokenProvider jwtTokenProvider,
                        AdminMfaConfigRepository adminMfaConfigRepository,
                        AdminMfaService adminMfaService) {
-        this.authenticationManager = authenticationManager;
+        this.keycloakAuthenticationService = keycloakAuthenticationService;
         this.jwtTokenProvider = jwtTokenProvider;
         this.adminMfaConfigRepository = adminMfaConfigRepository;
         this.adminMfaService = adminMfaService;
@@ -58,27 +46,26 @@ public class AuthService {
     public JwtResponse login(LoginRequest loginRequest) {
         logger.info("Processing login for user: {}", loginRequest.getUsername());
 
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginRequest.getUsername(), loginRequest.getPassword())
-        );
+        // Authenticate against Keycloak
+        KeycloakAuthenticationService.KeycloakUserInfo userInfo = keycloakAuthenticationService
+                .authenticateUser(loginRequest.getUsername(), loginRequest.getPassword());
 
         // Post-authentication checks (e.g., MFA for admins)
-        boolean isAdmin = authentication.getAuthorities().stream()
+        boolean isAdmin = userInfo.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
-                .anyMatch(ROLE_ADMIN::equals);
+                .anyMatch(SecurityConstants.ROLE_ADMIN::equals);
 
         if (isAdmin) {
             logger.debug("Admin user {} authenticated by password. Checking MFA status.", loginRequest.getUsername());
-            UUID adminUserId = getUserIdFromAuthentication(authentication);
+            UUID adminUserId = userInfo.getUserId();
             if (adminUserId == null) {
-                // Should not happen if authentication principal is as expected (e.g. KeycloakAuthenticationToken or Jwt)
-                logger.error("Could not extract User ID for admin {} from authentication object.", loginRequest.getUsername());
+                logger.error("Could not extract User ID for admin {} from Keycloak.", loginRequest.getUsername());
                 throw new BadCredentialsException("Admin user identifier not found after authentication.");
             }
 
             AdminMfaConfig mfaConfig = adminMfaConfigRepository.findByUserId(adminUserId).orElse(null);
 
-            if (mfaConfig != null && mfaConfig.isMfaEnabled()) {
+            if (mfaConfig != null && mfaConfig.getIsEnabled()) {
                 logger.info("MFA is enabled for admin {}. Verifying OTP.", loginRequest.getUsername());
                 if (loginRequest.getOtp() == null || loginRequest.getOtp().trim().isEmpty()) {
                     logger.warn("MFA required for admin {}, but OTP not provided.", loginRequest.getUsername());
@@ -97,32 +84,64 @@ public class AuthService {
         }
 
         // If all checks pass (including MFA for relevant admins), generate JWT
-        String jwt = jwtTokenProvider.generateToken(authentication);
+        String jwt = jwtTokenProvider.generateTokenForUser(userInfo.getUsername(), userInfo.getAuthorities());
         Long expiresIn = jwtTokenProvider.getExpiryDateFromToken(jwt) - System.currentTimeMillis();
         logger.info("User {} logged in successfully. JWT generated.", loginRequest.getUsername());
         return new JwtResponse(jwt, expiresIn);
     }
 
-    private UUID getUserIdFromAuthentication(Authentication authentication) {
-        Object principal = authentication.getPrincipal();
-        if (principal instanceof Jwt) { // Common if using Spring Security OAuth2 Resource Server with Keycloak
-            Jwt jwtPrincipal = (Jwt) principal;
-            String sub = jwtPrincipal.getSubject();
-            try {
-                return UUID.fromString(sub);
-            } catch (IllegalArgumentException e) {
-                logger.error("Subject claim '{}' in JWT is not a valid UUID.", sub, e);
-                return null;
-            }
+
+
+    /**
+     * Refreshes a JWT token with additional business logic validation.
+     * This method can be extended to add business rules for token refresh.
+     *
+     * @param oldToken The current JWT token to be refreshed
+     * @return JwtResponse containing the new token and expiry information
+     * @throws BadCredentialsException if the token is invalid or cannot be refreshed
+     */
+    public JwtResponse refreshToken(String oldToken) {
+        logger.debug("Processing token refresh request");
+
+        if (!jwtTokenProvider.validateToken(oldToken)) {
+            logger.warn("Invalid token provided for refresh");
+            throw new BadCredentialsException("Invalid token for refresh");
         }
-        // Add other principal types if needed, e.g., KeycloakAuthenticationToken
-        // else if (principal instanceof KeycloakPrincipal) {
-        //    KeycloakPrincipal kcPrincipal = (KeycloakPrincipal) principal;
-        //    return UUID.fromString(kcPrincipal.getKeycloakSecurityContext().getToken().getSubject());
-        // }
-        logger.warn("Could not determine User ID from principal type: {}", principal.getClass().getName());
-        return null;
+
+        Authentication authentication = jwtTokenProvider.getAuthentication(oldToken);
+
+        // Additional business logic can be added here, such as:
+        // - Checking if user is still active
+        // - Validating refresh frequency limits
+        // - Checking for security policy changes
+
+        String newJwt = jwtTokenProvider.generateToken(authentication);
+        Long expiresIn = jwtTokenProvider.getExpiryDateFromToken(newJwt) - System.currentTimeMillis();
+
+        logger.info("Token refreshed successfully for user: {}", authentication.getName());
+        return new JwtResponse(newJwt, expiresIn);
     }
 
-    // TODO: Add method for token refresh if it needs business logic beyond JwtTokenProvider
+    /**
+     * Validates a JWT token and returns token information.
+     * This method can be extended to add additional validation logic.
+     *
+     * @param token The JWT token to validate
+     * @return Map containing token validation results and user information
+     */
+    public Map<String, Object> validateToken(String token) {
+        if (!jwtTokenProvider.validateToken(token)) {
+            logger.warn("Token validation failed");
+            return Map.of("status", "invalid");
+        }
+
+        Authentication authentication = jwtTokenProvider.getAuthentication(token);
+        logger.debug("Token validated successfully for user: {}", authentication.getName());
+
+        return Map.of(
+            "status", "valid",
+            "user", authentication.getName(),
+            "authorities", authentication.getAuthorities()
+        );
+    }
 }

@@ -18,21 +18,19 @@ public class S3Config {
 
     private static final Logger logger = LoggerFactory.getLogger(S3Config.class);
 
-    @Value("${vendor.s3.region:#{null}}") // Default to null if not set, SDK will try to determine
-    private Optional<String> s3Region;
+    @Value("${vendor.s3.region:us-east-1}") // Default to us-east-1 if not set
+    private String s3Region;
 
     @Value("${vendor.s3.endpoint-override:#{null}}")
     private Optional<String> s3EndpointOverride;
 
     @Bean
     public S3Client s3Client() {
-        S3Client.Builder builder = S3Client.builder()
+        var builder = S3Client.builder()
                 .credentialsProvider(DefaultCredentialsProvider.create()); // Uses default chain
 
-        s3Region.ifPresent(region -> {
-            logger.info("Configuring S3 client with region: {}", region);
-            builder.region(Region.of(region));
-        });
+        logger.info("Configuring S3 client with region: {}", s3Region);
+        builder.region(Region.of(s3Region));
 
         s3EndpointOverride.ifPresent(endpoint -> {
             logger.info("Configuring S3 client with endpoint override: {}", endpoint);
@@ -44,7 +42,7 @@ public class S3Config {
         });
 
         logger.info("S3Client bean created. Region: {}, Endpoint Override: {}",
-            s3Region.orElse("SDK Default"), s3EndpointOverride.orElse("None"));
+            s3Region, s3EndpointOverride.orElse("None"));
 
         return builder.build();
     }
@@ -55,10 +53,8 @@ public class S3Config {
                 .credentialsProvider(DefaultCredentialsProvider.create()); // Presigner also needs credentials
 
         // Region for presigner should match the S3Client's region for the bucket
-        s3Region.ifPresent(region -> {
-            logger.info("Configuring S3 presigner with region: {}", region);
-            builder.region(Region.of(region));
-        });
+        logger.info("Configuring S3 presigner with region: {}", s3Region);
+        builder.region(Region.of(s3Region));
 
         s3EndpointOverride.ifPresent(endpoint -> {
              logger.info("Configuring S3 presigner with endpoint override: {}", endpoint);
@@ -71,7 +67,7 @@ public class S3Config {
         // For more direct control, pass s3Client.serviceConfiguration() if needed.
 
         logger.info("S3Presigner bean created. Region: {}, Endpoint Override: {}",
-            s3Region.orElse("SDK Default"), s3EndpointOverride.orElse("None"));
+            s3Region, s3EndpointOverride.orElse("None"));
 
         return builder.build();
     }

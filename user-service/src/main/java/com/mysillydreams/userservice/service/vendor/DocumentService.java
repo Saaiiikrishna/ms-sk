@@ -14,8 +14,7 @@ import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
+import java.util.concurrent.CompletableFuture;
 
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -141,19 +140,15 @@ public class DocumentService {
         payload.put("eventType", "KycDocumentUploaded");
 
 
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(kycDocumentUploadedTopic, document.getId().toString(), payload);
-        future.addCallback(new ListenableFutureCallback<>() {
-            @Override
-            public void onSuccess(SendResult<String, Object> result) {
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(kycDocumentUploadedTopic, document.getId().toString(), payload);
+        future.whenComplete((result, ex) -> {
+            if (ex == null) {
                 logger.info("Successfully published 'KycDocumentUploaded' event for DocumentId: {}. Topic: {}, Partition: {}, Offset: {}",
                         updatedDocument.getId(),
                         result.getRecordMetadata().topic(),
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
-            }
-
-            @Override
-            public void onFailure(Throwable ex) {
+            } else {
                 logger.error("Failed to publish 'KycDocumentUploaded' event for DocumentId: {}. Topic: {}",
                         updatedDocument.getId(), kycDocumentUploadedTopic, ex);
             }

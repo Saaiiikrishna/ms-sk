@@ -1,6 +1,7 @@
 package com.mysillydreams.userservice.service.delivery;
 
 import com.mysillydreams.userservice.domain.delivery.AssignmentStatus;
+import com.mysillydreams.userservice.domain.delivery.AssignmentType;
 import com.mysillydreams.userservice.domain.delivery.DeliveryProfile;
 import com.mysillydreams.userservice.domain.delivery.OrderAssignment;
 import com.mysillydreams.userservice.dto.delivery.OrderAssignmentDto; // For listAssignments
@@ -17,7 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 

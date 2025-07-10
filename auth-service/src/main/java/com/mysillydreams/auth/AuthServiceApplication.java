@@ -2,9 +2,11 @@ package com.mysillydreams.auth;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration;
 
-@SpringBootApplication(
+@SpringBootApplication
+@EnableDiscoveryClient(
         // We are using Keycloak for user management, so we can exclude Spring Boot's
         // default UserDetailsService auto-configuration if it causes conflicts or
         // if we want to be explicit that Keycloak is the source of truth.

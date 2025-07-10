@@ -7,13 +7,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import org.hibernate.annotations.Where; // For @Where clause
-
 import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-@Where(clause = "active = true AND archived_at IS NULL") // Default filter for active users
 public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
     // Standard find methods will now respect the @Where clause implicitly
@@ -41,4 +38,8 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
      * @return An {@link Optional} containing the {@link UserEntity} if found.
      */
     Optional<UserEntity> findByEmail(String email); // Searching by encrypted email.
+
+    // Additional methods for admin operations
+    Page<UserEntity> findByActiveTrue(Pageable pageable);
+    Page<UserEntity> findByActiveFalse(Pageable pageable);
 }

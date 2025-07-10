@@ -3,6 +3,11 @@ package com.mysillydreams.userservice.service;
 import com.mysillydreams.userservice.domain.UserEntity;
 import com.mysillydreams.userservice.dto.UserDto;
 import com.mysillydreams.userservice.repository.UserRepository;
+import com.mysillydreams.userservice.service.EncryptionServiceInterface;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import jakarta.persistence.EntityNotFoundException; // Standard JPA
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,10 +30,10 @@ public class UserService {
     private static final Logger logger = LoggerFactory.getLogger(UserService.class);
 
     private final UserRepository userRepository;
-    private final EncryptionService encryptionService; // Needed if we were to check uniqueness on encrypted email
+    private final EncryptionServiceInterface encryptionService; // Needed if we were to check uniqueness on encrypted email
 
     @Autowired
-    public UserService(UserRepository userRepository, EncryptionService encryptionService) {
+    public UserService(UserRepository userRepository, EncryptionServiceInterface encryptionService) {
         this.userRepository = userRepository;
         this.encryptionService = encryptionService;
     }
@@ -186,6 +191,63 @@ public class UserService {
         // Or map to SessionDto
         logger.warn("listSessions method is a stub and not fully implemented.");
         return List.of(); // Placeholder
+    }
+
+    // Additional methods needed by AdminController
+    @Transactional(readOnly = true)
+    public Page<UserDto> listAllUsersIncludingArchived(Pageable pageable) {
+        Page<UserEntity> users = userRepository.findAll(pageable);
+        return users.map(this::convertToDto);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<UserDto> listActiveUsers(Pageable pageable) {
+        Page<UserEntity> users = userRepository.findByActiveTrue(pageable);
+        return users.map(this::convertToDto);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<UserDto> listArchivedUsers(Pageable pageable) {
+        Page<UserEntity> users = userRepository.findByActiveFalse(pageable);
+        return users.map(this::convertToDto);
+    }
+
+    @Transactional(readOnly = true)
+    public UserDto getUserByIdIncludingArchived(UUID id) {
+        UserEntity user = userRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with id: " + id));
+        return convertToDto(user);
+    }
+
+    @Transactional
+    public void softDeleteUserByReferenceId(String referenceId) {
+        UserEntity user = userRepository.findByReferenceId(referenceId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with reference id: " + referenceId));
+        user.setActive(false);
+        user.setArchivedAt(Instant.now());
+        userRepository.save(user);
+        logger.info("User soft deleted with referenceId: {}", referenceId);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean userExistsIncludingArchived(UUID id) {
+        return userRepository.existsById(id);
+    }
+
+    // Helper method to convert entity to DTO
+    private UserDto convertToDto(UserEntity entity) {
+        UserDto dto = new UserDto();
+        dto.setId(entity.getId());
+        dto.setReferenceId(entity.getReferenceId());
+        dto.setName(entity.getName());
+        dto.setEmail(entity.getEmail());
+        dto.setPhone(entity.getPhone());
+        dto.setDob(entity.getDob());
+        dto.setActive(entity.isActive());
+        dto.setCreatedAt(entity.getCreatedAt() != null ? entity.getCreatedAt().toString() : null);
+        dto.setUpdatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().toString() : null);
+        dto.setArchivedAt(entity.getArchivedAt() != null ? entity.getArchivedAt().toString() : null);
+        return dto;
     }
 
     // TODO: Methods for managing addresses (add, update, delete)

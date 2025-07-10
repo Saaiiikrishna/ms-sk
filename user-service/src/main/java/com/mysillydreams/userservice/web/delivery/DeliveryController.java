@@ -1,5 +1,6 @@
 package com.mysillydreams.userservice.web.delivery;
 
+import com.mysillydreams.userservice.domain.delivery.DeliveryEvent;
 import com.mysillydreams.userservice.domain.delivery.AssignmentStatus;
 import com.mysillydreams.userservice.domain.delivery.OrderAssignment;
 import com.mysillydreams.userservice.dto.delivery.DeliveryEventDto;
@@ -68,8 +69,6 @@ public class DeliveryController {
                               DeliveryAssignmentService deliveryAssignmentService,
                               DeliveryEventService deliveryEventService,
                               DeliveryDocumentStorageService deliveryDocumentStorageService,
-                              OrderAssignmentRepository orderAssignmentRepository) {
-
                               OrderAssignmentRepository orderAssignmentRepository,
                               OtpVerificationService otpVerificationService) {
 
@@ -78,7 +77,6 @@ public class DeliveryController {
         this.deliveryEventService = deliveryEventService;
         this.deliveryDocumentStorageService = deliveryDocumentStorageService;
         this.orderAssignmentRepository = orderAssignmentRepository;
-
         this.otpVerificationService = otpVerificationService;
     }
 

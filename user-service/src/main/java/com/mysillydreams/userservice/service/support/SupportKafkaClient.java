@@ -8,11 +8,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
-
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 public class SupportKafkaClient {
@@ -60,7 +59,7 @@ public class SupportKafkaClient {
         logger.info("Publishing SupportTicketCreated event for TicketId: {}, CustomerId: {}, Topic: {}",
                 ticket.getId(), ticket.getCustomerId(), ticketCreatedTopic);
 
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(ticketCreatedTopic, ticket.getId().toString(), payload);
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(ticketCreatedTopic, ticket.getId().toString(), payload);
         addKafkaCallback(future, "SupportTicketCreated", ticket.getId().toString());
     }
 
@@ -96,26 +95,22 @@ public class SupportKafkaClient {
         logger.info("Publishing SupportTicketUpdated event for TicketId: {}, NewStatus: {}, Topic: {}",
                 ticket.getId(), ticket.getStatus(), ticketUpdatedTopic);
 
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(ticketUpdatedTopic, ticket.getId().toString(), payload);
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(ticketUpdatedTopic, ticket.getId().toString(), payload);
         addKafkaCallback(future, "SupportTicketUpdated", ticket.getId().toString());
     }
 
 
-    private void addKafkaCallback(ListenableFuture<SendResult<String, Object>> future, String eventType, String recordKey) {
-        future.addCallback(new ListenableFutureCallback<>() {
-            @Override
-            public void onSuccess(SendResult<String, Object> result) {
+    private void addKafkaCallback(CompletableFuture<SendResult<String, Object>> future, String eventType, String recordKey) {
+        future.whenComplete((result, ex) -> {
+            if (ex == null) {
                 logger.info("Successfully published '{}' event for Key: {}. Topic: {}, Partition: {}, Offset: {}",
                         eventType, recordKey,
                         result.getRecordMetadata().topic(),
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
-            }
-
-            @Override
-            public void onFailure(Throwable ex) {
-                logger.error("Failed to publish '{}' event for Key: {}. Topic: {}. Error: {}",
-                        eventType, recordKey, future.isDone() ? "N/A (callback after future completion)" : ex.getMessage(), ex);
+            } else {
+                logger.error("Failed to publish '{}' event for Key: {}. Error: {}",
+                        eventType, recordKey, ex.getMessage(), ex);
             }
         });
     }

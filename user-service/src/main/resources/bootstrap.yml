@@ -12,11 +12,12 @@ spring:
       scheme: ${VAULT_SCHEME:http} # Default to http for local dev; use https for prod
       # token: ${VAULT_TOKEN} # Use token auth for local dev if AppRole is not set up yet. Not recommended for prod.
 
-      # Authentication method - AppRole is recommended for applications
-      authentication: ${VAULT_AUTH_METHOD:APPROLE} # Default to APPROLE, can be TOKEN for local dev
+      # Authentication method - TOKEN for development, AppRole for production
+      authentication: ${VAULT_AUTH_METHOD:TOKEN} # Default to TOKEN for dev, can be APPROLE for prod
+      token: ${VAULT_TOKEN:root-token} # Use token auth for development
       app-role:
-        role-id: ${VAULT_ROLE_ID:} # Must be provided as env var
-        secret-id: ${VAULT_SECRET_ID:} # Must be provided as env var
+        role-id: ${VAULT_ROLE_ID:} # Must be provided as env var for APPROLE auth
+        secret-id: ${VAULT_SECRET_ID:} # Must be provided as env var for APPROLE auth
         # app-role-path: approle # Default path, change if customized in Vault
         # token-ttl: Optional # Configure token TTL if needed
         # renew-ttl: Optional # Configure renewal TTL if needed

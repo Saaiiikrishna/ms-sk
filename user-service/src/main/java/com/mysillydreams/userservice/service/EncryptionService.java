@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.vault.core.VaultTransitOperations;
 import org.springframework.vault.support.VaultResponse;
@@ -12,7 +13,8 @@ import org.springframework.vault.VaultException;
 
 
 @Service
-public class EncryptionService {
+@ConditionalOnProperty(name = "spring.cloud.vault.enabled", havingValue = "true")
+public class EncryptionService implements EncryptionServiceInterface {
 
     private static final Logger logger = LoggerFactory.getLogger(EncryptionService.class);
 

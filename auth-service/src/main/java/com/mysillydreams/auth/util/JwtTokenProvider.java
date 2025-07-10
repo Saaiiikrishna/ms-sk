@@ -12,7 +12,6 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.User; // Spring Security User
 import org.springframework.stereotype.Component;
-
 import jakarta.annotation.PostConstruct;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
@@ -51,6 +50,10 @@ public class JwtTokenProvider {
     public String generateToken(Authentication authentication) {
         String username = authentication.getName();
         Collection<? extends GrantedAuthority> authorities = authentication.getAuthorities();
+        return generateTokenForUser(username, authorities);
+    }
+
+    public String generateTokenForUser(String username, Collection<? extends GrantedAuthority> authorities) {
         String roles = authorities.stream()
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.joining(","));
@@ -70,7 +73,7 @@ public class JwtTokenProvider {
     }
 
     public Authentication getAuthentication(String token) {
-        Claims claims = Jwts.parserBuilder()
+        Claims claims = Jwts.parser()
                 .setSigningKey(jwtSecretKey)
                 .build()
                 .parseClaimsJws(token)
@@ -96,7 +99,7 @@ public class JwtTokenProvider {
             return false;
         }
         try {
-            Jwts.parserBuilder().setSigningKey(jwtSecretKey).build().parseClaimsJws(authToken);
+            Jwts.parser().setSigningKey(jwtSecretKey).build().parseClaimsJws(authToken);
             logger.debug("JWT token validated successfully.");
             return true;
         } catch (SignatureException ex) {
@@ -114,7 +117,7 @@ public class JwtTokenProvider {
     }
 
     public String getUsernameFromToken(String token) {
-        Claims claims = Jwts.parserBuilder()
+        Claims claims = Jwts.parser()
                 .setSigningKey(jwtSecretKey)
                 .build()
                 .parseClaimsJws(token)
@@ -123,7 +126,7 @@ public class JwtTokenProvider {
     }
 
     public Long getExpiryDateFromToken(String token) {
-        Claims claims = Jwts.parserBuilder()
+        Claims claims = Jwts.parser()
                 .setSigningKey(jwtSecretKey)
                 .build()
                 .parseClaimsJws(token)

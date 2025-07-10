@@ -17,26 +17,28 @@ public class AdditionalSecurityHeadersFilter extends OncePerRequestFilter {
         // HTTP Strict Transport Security (HSTS)
         // Tells browsers to always use HTTPS for this domain. Max-age is in seconds.
         // Ensure your service is indeed always served over HTTPS in production before enabling widely.
-        // Consider `includeSubDomains` and `preload` directives for stronger HSTS.
-        response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+        response.setHeader(SecurityConstants.HEADER_STRICT_TRANSPORT_SECURITY,
+            "max-age=31536000; includeSubDomains; preload");
 
         // X-Content-Type-Options
         // Prevents browsers from MIME-sniffing a response away from the declared content-type.
-        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader(SecurityConstants.HEADER_X_CONTENT_TYPE_OPTIONS, "nosniff");
 
         // X-Frame-Options
         // Provides Clickjacking protection. DENY prevents framing entirely.
-        response.setHeader("X-Frame-Options", "DENY");
+        response.setHeader(SecurityConstants.HEADER_X_FRAME_OPTIONS, "DENY");
 
         // X-XSS-Protection (Deprecated by many browsers in favor of CSP, but can still be set for older ones)
-        // response.setHeader("X-XSS-Protection", "1; mode=block");
+        response.setHeader(SecurityConstants.HEADER_X_XSS_PROTECTION, "1; mode=block");
 
         // Content Security Policy (CSP)
         // For an API, a restrictive policy is good. This prevents loading of unexpected resources.
-        // 'default-src 'none'' is very restrictive. Adjust if your API serves any static content or specific needs.
-        // 'frame-ancestors 'none'' is another clickjacking protection.
-        response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self';");
-        // 'self' allows loading resources from the same origin.
+        response.setHeader(SecurityConstants.HEADER_CONTENT_SECURITY_POLICY,
+            "default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self';");
+
+        // Referrer Policy
+        // Controls how much referrer information is included with requests
+        response.setHeader(SecurityConstants.HEADER_REFERRER_POLICY, "strict-origin-when-cross-origin");
 
         filterChain.doFilter(request, response);
     }

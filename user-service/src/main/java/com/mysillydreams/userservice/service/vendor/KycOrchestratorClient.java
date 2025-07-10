@@ -7,7 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
-import org.springframework.util.concurrent.ListenableFuture;
+import java.util.concurrent.CompletableFuture;
 import org.springframework.util.concurrent.ListenableFutureCallback;
 
 import java.util.Map;
@@ -45,21 +45,17 @@ public class KycOrchestratorClient {
         logger.info("Attempting to start KYC workflow. WorkflowId: {}, VendorProfileId: {}, Topic: {}",
                 workflowId, vendorProfileId, startKycTopic);
 
-        ListenableFuture<SendResult<String, Object>> future = kafkaTemplate.send(startKycTopic, workflowId, payload); // Using workflowId as message key
+        CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(startKycTopic, workflowId, payload); // Using workflowId as message key
 
-        future.addCallback(new ListenableFutureCallback<>() {
-            @Override
-            public void onSuccess(SendResult<String, Object> result) {
+        future.whenComplete((result, ex) -> {
+            if (ex == null) {
                 logger.info("Successfully published 'StartKycVendorWorkflow' event for WorkflowId: {}, VendorProfileId: {}. Topic: {}, Partition: {}, Offset: {}",
                         workflowId,
                         vendorProfileId,
                         result.getRecordMetadata().topic(),
                         result.getRecordMetadata().partition(),
                         result.getRecordMetadata().offset());
-            }
-
-            @Override
-            public void onFailure(Throwable ex) {
+            } else {
                 logger.error("Failed to publish 'StartKycVendorWorkflow' event for WorkflowId: {}, VendorProfileId: {}. Topic: {}",
                         workflowId, vendorProfileId, startKycTopic, ex);
                 // Consider retry mechanisms or specific exception handling if this publish is critical path

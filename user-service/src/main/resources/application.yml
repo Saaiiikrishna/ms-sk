@@ -9,14 +9,10 @@ spring:
     name: user-service
 
   datasource:
-    # These properties will be populated from Vault.
-    # Example: Vault secret at path "secret/data/user-service" contains:
-    #   db.url: "jdbc:postgresql://localhost:5432/usersdb_from_vault"
-    #   db.username: "user_from_vault"
-    #   db.password: "password_from_vault"
-    url: ${db.url:jdbc:postgresql://localhost:5432/usersdb_default} # Default if Vault key not found
-    username: ${db.username:user_default}
-    password: ${db.password:pass_default}
+    # Simplified configuration for development
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/userdb}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:0000}
     driver-class-name: org.postgresql.Driver
     # Connection pool properties (e.g., HikariCP)
     hikari:
@@ -51,26 +47,96 @@ spring:
       # properties:
         # spring.json.trusted.packages: "com.mysillydreams.*" # Or specific packages for deserialization
 
-  # Spring Cloud Vault Transit configuration (for EncryptionService)
+  # Enable Vault for production
   cloud:
     vault:
+      enabled: true
+      uri: http://vault:8200
+      token: root-token
+      kv:
+        enabled: true
+        backend: secret
+        profile-separator: '/'
+        default-context: application
+        application-name: user-service
+      config:
+        lifecycle:
+          enabled: true
+          min-renewal: 10s
+          expiry-threshold: 1m
       transit:
-        # path: transit # Default path for transit engine
-        default-key-name: user-service-key # Default key name used by EncryptionService
+        enabled: true
+        backend: transit
+        default-key-name: user-service-key
 
 server:
-  port: 8081 # User service on a different port than auth-service (8080)
+  port: 8082 # User service on a different port than auth-service (8081)
 
+# Eureka Client Configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+
+# Redis Configuration
+spring.data.redis:
+  host: ${REDIS_HOST:redis}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  database: 1  # Different database from auth-service
+  timeout: 2000ms
+  lettuce:
+    pool:
+      max-active: 8
+      max-idle: 8
+      min-idle: 0
+
+# Spring Boot Admin Configuration
+spring.boot.admin.client:
+  url: ${SPRING_BOOT_ADMIN_CLIENT_URL:http://admin-server:8080}
+  instance:
+    name: user-service
+    service-url: ${SPRING_BOOT_ADMIN_CLIENT_SERVICE_URL:http://user-service:8082}
+
+# Management endpoints for monitoring and tracing
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,env,beans,configprops,mappings # Expose more for dev/debug, restrict for prod
+        include: "*"
   endpoint:
     health:
-      show-details: when_authorized # Or "always" for dev
+      show-details: always
+      show-components: always
       probes:
-        enabled: true # For Kubernetes probes
+        enabled: true
+    info:
+      enabled: true
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  health:
+    redis:
+      enabled: true
+    db:
+      enabled: true
+  info:
+    env:
+      enabled: true
+    java:
+      enabled: true
+    os:
+      enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://zipkin:9411/api/v2/spans}
 
 logging:
   level:
@@ -85,7 +151,7 @@ logging:
 vendor:
   s3:
     bucket: ${VENDOR_DOCS_S3_BUCKET:mysillydreams-vendor-docs} # Default bucket name, override in prod
-    # region: ${AWS_S3_REGION:us-east-1} # Configure if not using default SDK region provider chain
+    region: ${AWS_S3_REGION:us-east-1} # Configure if not using default SDK region provider chain
     # endpoint-override: http://localhost:4566 # For LocalStack testing
 
 # KYC Kafka Topics
@@ -138,7 +204,7 @@ spring:
   #       service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
   jpa:
     hibernate:
-      ddl-auto: validate # Safer in prod/k8s
+      ddl-auto: update # Create tables automatically for initial deployment
     show-sql: false
   management:
     endpoint:

@@ -1,6 +1,6 @@
 package com.mysillydreams.auth.service;
 
-import com.mysillydreams.auth.domain.AdminMfaConfig;
+import com.mysillydreams.auth.entity.AdminMfaConfig;
 import com.mysillydreams.auth.repository.AdminMfaConfigRepository;
 import dev.samstevens.totp.code.*;
 import dev.samstevens.totp.exceptions.QrGenerationException;
@@ -13,6 +13,7 @@ import dev.samstevens.totp.time.SystemTimeProvider;
 import dev.samstevens.totp.time.TimeProvider;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
+import java.util.Base64;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,11 +68,12 @@ public class AdminMfaService {
         String rawTotpSecret = secretGenerator.generate();
 
         AdminMfaConfig mfaConfig = adminMfaConfigRepository.findByUserId(adminUserId)
-                .orElse(new AdminMfaConfig(adminUserId, "")); // Create if not exists, secret will be set
+                .orElse(new AdminMfaConfig()); // Create if not exists, secret will be set
 
-        // The raw secret is stored encrypted by the TotpSecretConverter
-        mfaConfig.setEncryptedTotpSecret(rawTotpSecret); // Converter will encrypt this on save
-        mfaConfig.setMfaEnabled(false); // Ensure it's disabled until verified
+        // Set the admin profile ID and secret
+        mfaConfig.setAdminProfileId(adminUserId);
+        mfaConfig.setSecretKey(rawTotpSecret); // Store the secret key
+        mfaConfig.setIsEnabled(false); // Ensure it's disabled until verified
         adminMfaConfigRepository.save(mfaConfig);
         logger.info("Stored (encrypted) TOTP secret for admin User ID: {} and marked MFA as not yet enabled.", adminUserId);
 
@@ -86,7 +88,9 @@ public class AdminMfaService {
 
         String qrCodeDataUri;
         try {
-            qrCodeDataUri = qrGenerator.getImageUri(qrData);
+            byte[] qrCodeBytes = qrGenerator.generate(qrData);
+            String base64QrCode = Base64.getEncoder().encodeToString(qrCodeBytes);
+            qrCodeDataUri = "data:image/png;base64," + base64QrCode;
         } catch (QrGenerationException e) {
             logger.error("Failed to generate QR code for admin User ID {}: {}", adminUserId, e.getMessage(), e);
             throw new MfaOperationException("Failed to generate QR code for MFA setup.", e);
@@ -105,10 +109,8 @@ public class AdminMfaService {
                     return new EntityNotFoundException("MFA configuration not found for user. Please run setup first.");
                 });
 
-        // The encryptedTotpSecret field in mfaConfig will be automatically decrypted by TotpSecretConverter
-        // when the entity is loaded by JPA if the converter is correctly applied.
-        // So, mfaConfig.getEncryptedTotpSecret() here would return the *plaintext* secret.
-        String rawTotpSecret = mfaConfig.getEncryptedTotpSecret(); // This is actually the decrypted secret due to converter
+        // Get the secret key from the MFA config
+        String rawTotpSecret = mfaConfig.getSecretKey();
 
         if (rawTotpSecret == null || rawTotpSecret.isEmpty()) {
             logger.error("No TOTP secret found for admin User ID {} during verification. Possible data issue or setup not completed.", adminUserId);
@@ -116,7 +118,7 @@ public class AdminMfaService {
         }
 
         if (codeVerifier.isValidCode(rawTotpSecret, otp)) {
-            mfaConfig.setMfaEnabled(true);
+            mfaConfig.setIsEnabled(true);
             adminMfaConfigRepository.save(mfaConfig);
             logger.info("MFA successfully verified and enabled for admin User ID: {}", adminUserId);
             return true;
@@ -134,12 +136,12 @@ public class AdminMfaService {
         if (otp == null || otp.trim().isEmpty()) return false;
 
         AdminMfaConfig mfaConfig = adminMfaConfigRepository.findByUserId(adminUserId).orElse(null);
-        if (mfaConfig == null || !mfaConfig.isMfaEnabled() || mfaConfig.getEncryptedTotpSecret() == null) {
+        if (mfaConfig == null || !mfaConfig.getIsEnabled() || mfaConfig.getSecretKey() == null) {
             logger.warn("MFA not configured, not enabled, or no secret found for admin User ID {} during OTP verification.", adminUserId);
             return false; // Or throw if admin is expected to always have MFA config once admin role is present
         }
-        // getEncryptedTotpSecret() returns decrypted secret due to converter
-        return codeVerifier.isValidCode(mfaConfig.getEncryptedTotpSecret(), otp);
+        // Use the secret key for verification
+        return codeVerifier.isValidCode(mfaConfig.getSecretKey(), otp);
     }
 
 

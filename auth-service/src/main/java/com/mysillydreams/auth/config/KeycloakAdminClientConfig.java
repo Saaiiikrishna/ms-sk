@@ -28,11 +28,17 @@ public class KeycloakAdminClientConfig {
     // The service account for 'auth-service-client' needs appropriate roles in the target realm (MySillyDreams-Realm)
     // to manage users (e.g., 'manage-users' client role from 'realm-management' client).
 
-    @Value("${keycloak.resource}") // This is our client-id: auth-service-client
+    @Value("${keycloak.admin-client.client-id}") // This is our client-id: admin-cli
     private String adminClientId;
 
-    @Value("${keycloak.credentials.secret}")
+    @Value("${keycloak.admin-client.client-secret}")
     private String adminClientSecret;
+
+    @Value("${keycloak.admin-client.username}")
+    private String adminUsername;
+
+    @Value("${keycloak.admin-client.password}")
+    private String adminPassword;
 
     // It's often better to use a dedicated admin client or service account for admin operations
     // rather than the same client used for user authentication, if possible and if permissions differ.
@@ -48,16 +54,17 @@ public class KeycloakAdminClientConfig {
         // If you need to customize the Resteasy client (e.g., timeouts, proxy),
         // you can build one and pass it to KeycloakBuilder.
         ResteasyClientBuilder resteasyClientBuilder = (ResteasyClientBuilder) ResteasyClientBuilder.newBuilder() // Cast needed
-                .connectionPoolSize(20) // Example: Configure connection pool size
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS);
 
         return KeycloakBuilder.builder()
                 .serverUrl(keycloakServerUrl)
-                .realm(serviceRealm) // Target realm for user operations
-                .grantType(OAuth2Constants.CLIENT_CREDENTIALS) // Use client credentials grant for service account
+                .realm("master") // Admin operations typically use master realm
+                .grantType(OAuth2Constants.PASSWORD) // Use password grant for admin user
                 .clientId(adminClientId)
                 .clientSecret(adminClientSecret)
+                .username(adminUsername)
+                .password(adminPassword)
                 .resteasyClient(resteasyClientBuilder.build()) // Pass the customized Resteasy client
                 .build();
     }
