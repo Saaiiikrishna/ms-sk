@@ -1,0 +1,2 @@
+# This directory is for internal-only controllers, not exposed to the public API gateway.
+# Access should be strictly controlled (e.g., via network policies, mTLS, or secret API keys).

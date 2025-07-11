@@ -1,0 +1,99 @@
+# Custom Admin Server Deployment for mysillydreams-dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-server
+  namespace: mysillydreams-dev
+  labels:
+    app: admin-server
+    environment: dev
+    component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-server
+      environment: dev
+  template:
+    metadata:
+      labels:
+        app: admin-server
+        environment: dev
+        component: monitoring
+    spec:
+      containers:
+      - name: admin-server
+        image: codecentric/spring-boot-admin:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "dev"
+        - name: ZOOKEEPER_CONNECT_STRING
+          value: "zookeeper.mysillydreams-dev:2181"
+        - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+          value: "http://eureka-server.mysillydreams-dev:8761/eureka/"
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx512m -XX:+UseG1GC -XX:+UseContainerSupport"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server
+  namespace: mysillydreams-dev
+  labels:
+    app: admin-server
+    environment: dev
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: admin-server
+    environment: dev
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server-nodeport
+  namespace: mysillydreams-dev
+  labels:
+    app: admin-server
+    environment: dev
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30080
+    name: http
+  selector:
+    app: admin-server
+    environment: dev

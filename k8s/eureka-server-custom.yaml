@@ -1,0 +1,97 @@
+# Custom Eureka Server Deployment for mysillydreams-dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eureka-server
+  namespace: mysillydreams-dev
+  labels:
+    app: eureka-server
+    environment: dev
+    component: service-discovery
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eureka-server
+      environment: dev
+  template:
+    metadata:
+      labels:
+        app: eureka-server
+        environment: dev
+        component: service-discovery
+    spec:
+      containers:
+      - name: eureka-server
+        image: steeltoeoss/eureka-server:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8761
+          name: http
+        env:
+        - name: ENVIRONMENT
+          value: "dev"
+        - name: ZOOKEEPER_CONNECT_STRING
+          value: "zookeeper.mysillydreams-dev:2181"
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx512m -XX:+UseG1GC -XX:+UseContainerSupport"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8761
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8761
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka-server
+  namespace: mysillydreams-dev
+  labels:
+    app: eureka-server
+    environment: dev
+spec:
+  ports:
+  - port: 8761
+    targetPort: 8761
+    name: http
+  selector:
+    app: eureka-server
+    environment: dev
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka-server-nodeport
+  namespace: mysillydreams-dev
+  labels:
+    app: eureka-server
+    environment: dev
+spec:
+  type: NodePort
+  ports:
+  - port: 8761
+    targetPort: 8761
+    nodePort: 30761
+    name: http
+  selector:
+    app: eureka-server
+    environment: dev

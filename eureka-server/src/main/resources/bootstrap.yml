@@ -1,0 +1,28 @@
+# Eureka Server Bootstrap Configuration
+# This is the ONLY configuration file - all other config comes from Zookeeper
+
+spring:
+  application:
+    name: eureka-server
+  config:
+    import: "optional:zookeeper:${ZOOKEEPER_CONNECT_STRING:zookeeper.mysillydreams:2181}"
+  cloud:
+    zookeeper:
+      connect-string: ${ZOOKEEPER_CONNECT_STRING:zookeeper.mysillydreams:2181}
+      config:
+        enabled: true
+        root: /mysillydreams
+        default-context: ${ENVIRONMENT:dev}/eureka-server
+        profile-separator: ','
+  profiles:
+    active: ${ENVIRONMENT:dev}
+
+# Basic server configuration (minimal required)
+server:
+  port: 8761
+
+# Basic Eureka configuration (will be overridden by Zookeeper)
+eureka:
+  client:
+    register-with-eureka: false
+    fetch-registry: false
