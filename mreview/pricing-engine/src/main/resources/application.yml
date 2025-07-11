@@ -1,0 +1,117 @@
+spring:
+  application:
+    name: pricing-engine
+  datasource:
+    # Ensure your environment variables CATALOG_DB_HOST, CATALOG_DB_USER, CATALOG_DB_PASS are set
+    # Defaulting to localhost and standard user/pass for local dev if env vars not set.
+    url: jdbc:postgresql://${CATALOG_DB_HOST:localhost}:5432/${CATALOG_DB_NAME:catalog_db}
+    username: ${CATALOG_DB_USER:user}
+    password: ${CATALOG_DB_PASS:password}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none   # The tables already exist in the catalog_db, pricing-engine reads them
+    show-sql: true # Good for development, consider false for production
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        # It's good practice to define naming strategies for consistency
+        physical_strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        implicit_strategy: org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy
+
+kafka:
+  # Ensure your KAFKA_BROKER environment variable is set
+  bootstrap-servers: ${KAFKA_BROKER:localhost:9092}
+  consumer:
+    group-id: pricing-engine-group
+    auto-offset-reset: earliest # Start reading from the beginning of the topic if no offset found
+    key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+    properties:
+      # For Spring Kafka JsonDeserializer to work with type information or trusted packages
+      spring.json.trusted.packages: "com.mysillydreams.*" # Trust DTOs from catalog-service and potentially this app
+      spring.json.use.type.headers: false # If type headers are not used by producer (catalog-service)
+      # spring.json.value.default.type: com.mysillydreams.catalogservice.dto.SomeGenericEventDto # If needed as a fallback
+
+# Application-specific topic names, resolved from properties or environment variables
+# These placeholders should match those used in @KafkaListener annotations
+# Assuming these will be resolved from Spring environment (e.g. config server, or other application.yml higher in precedence)
+# For local development, you might provide defaults here or in a profile-specific yml.
+# Example: topics.dynamicRule: ${DYNAMIC_RULE_TOPIC_NAME:dynamic.pricing.rule.events}
+topics:
+  # Consumed from Catalog Service
+  dynamicRule: ${KAFKA_TOPIC_DYNAMIC_RULE:dynamic.pricing.rule.events}
+  priceOverride: ${KAFKA_TOPIC_PRICE_OVERRIDE:price.override.events}
+  demandMetrics: ${KAFKA_TOPIC_DEMAND_METRICS:demand.metrics}
+  # Published by Pricing Engine
+  priceUpdated: ${KAFKA_TOPIC_PRICE_UPDATED:catalog.price.updated}
+  # Internal topics for GlobalKTables
+  internalRules: ${KAFKA_TOPIC_INTERNAL_RULES:internal.rules.v1} # Keyed by ruleId, will be removed or repurposed
+  internalOverrides: ${KAFKA_TOPIC_INTERNAL_OVERRIDES:internal.overrides.v1} # Keyed by overrideId, will be removed or repurposed
+  internalBasePrices: ${KAFKA_TOPIC_INTERNAL_BASE_PRICES:internal.item.baseprices.v1} # Keyed by itemId (String)
+  internalRulesByItemId: ${KAFKA_TOPIC_INTERNAL_RULES_BY_ITEMID:internal.rules-by-itemid.v1} # Keyed by itemId (String)
+  internalOverridesByItemId: ${KAFKA_TOPIC_INTERNAL_OVERRIDES_BY_ITEMID:internal.overrides-by-itemid.v1} # Keyed by itemId (String)
+  internalLastPublishedPrices: ${KAFKA_TOPIC_INTERNAL_LAST_PRICES:internal.last-published-prices.v1} # Keyed by itemId (String)
+  # DLT Topics
+  demandMetricsDlt: ${KAFKA_TOPIC_DEMAND_METRICS_DLT:demand.metrics.dlt} # For metric deserialization/validation issues
+  processingErrorsDlt: ${KAFKA_TOPIC_PROCESSING_ERRORS_DLT:processing.errors.dlt} # For errors during core processing logic
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus # Expose common actuator endpoints
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# Pricing Engine specific configurations
+pricing:
+  engine:
+    update:
+      threshold:
+        percentage: 0.01 # 1% change
+        # amount: 0.50 # Example: 50 cents (can use one or both)
+        # To disable a threshold, comment it out or set to a very large/small value
+
+server:
+  port: 8081 # Different from catalog-service (8082) and other services
+
+logging:
+  level:
+    com.mysillydreams.pricingengine: DEBUG
+    org.springframework.kafka: INFO
+    org.hibernate.SQL: DEBUG
+    # org.hibernate.type.descriptor.sql: TRACE # For parameter values, can be very verbose
+---
+# Example for a 'test' profile (pricing-engine/src/test/resources/application-test.yml could override this)
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:tc:postgresql:15.3-alpine:///test_pricing_db?TC_DAEMON=true # Testcontainers will manage this
+    username: testuser
+    password: testpassword
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop # For tests, create-drop is often useful
+  kafka:
+    bootstrap-servers: localhost:9092 # Will be overridden by @EmbeddedKafka in tests
+
+# For tests, topic names can be directly set or rely on default values if env vars aren't part of test setup
+topics:
+  dynamicRule: dynamic.pricing.rule.events # Direct value for test profile
+  priceOverride: price.override.events   # Direct value for test profile
+  demandMetrics: demand.metrics.test     # Different topic for test isolation if needed
+  priceUpdated: catalog.price.updated.test # Test topic for price updates
+  internalRules: internal.rules.v1.test # Old, to be removed
+  internalOverrides: internal.overrides.v1.test # Old, to be removed
+  internalBasePrices: internal.item.baseprices.v1.test
+  internalRulesByItemId: internal.rules-by-itemid.v1.test
+  internalOverridesByItemId: internal.overrides-by-itemid.v1.test
+  internalLastPublishedPrices: internal.last-published-prices.v1.test
+  demandMetricsDlt: demand.metrics.dlt.test
+  processingErrorsDlt: processing.errors.dlt.test

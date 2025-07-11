@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: order-api
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+keycloak:
+  realm: MyRealm
+  auth-server-url: ${KEYCLOAK_URL}/auth
+  resource: order-api-client
+  credentials:
+    secret: ${KEYCLOAK_SECRET}
+  bearer-only: true
+
+kafka:
+  bootstrap-servers: ${KAFKA_BROKER:localhost:9092} # Default to localhost:9092 if KAFKA_BROKER is not set
+  schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8081} # Added for later Avro step
+  topics:
+    orderCreated: order.created
+    orderCreatedDlq: order.created.dlq
+    orderCancelled: order.cancelled
+    orderCancelledDlq: order.cancelled.dlq
+
+app:
+  idempotency:
+    cache-ttl-minutes: 60
+  ratelimit:
+    capacity: 100 # Max tokens bucket can hold
+    refill-tokens: 100 # Tokens to add per refill period
+    refill-duration-minutes: 1 # Duration of refill period
+
+# Default Spring Boot Actuator settings for observability
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*" # exposing all endpoints for now, can be restricted
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true # enable histograms for request latencies
+# Logging properties
+logging:
+  level:
+    com.mysillydreams.orderapi: INFO # Corrected package name
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %X{traceId:-N/A} %X{spanId:-N/A} %X{idempotencyKey:-} %X{orderId:-} %X{customerId:-} %-5level %logger{36} - %msg%n"

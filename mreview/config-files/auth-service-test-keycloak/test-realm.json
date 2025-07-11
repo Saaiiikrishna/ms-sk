@@ -1,0 +1,91 @@
+{
+  "realm": "TestRealm",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "auth-service-client-test",
+      "secret": "test-secret",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:8080/*", "http://localhost:8081/*"],
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "fullScopeAllowed": true,
+      "roles": [
+        {
+          "name": "manage-users-custom",
+          "description": "Custom role to manage users (example)"
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "adminuser",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "adminpassword",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["ROLE_ADMIN", "ROLE_USER"],
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "query-users"]
+      }
+    },
+    {
+      "username": "normaluser",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "normalpassword",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["ROLE_USER"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "ROLE_ADMIN",
+        "description": "Administrator role"
+      },
+      {
+        "name": "ROLE_USER",
+        "description": "Standard user role"
+      },
+      {
+        "name": "ROLE_INTERNAL_SERVICE",
+        "description": "For service-to-service communication"
+      }
+    ]
+  },
+  "scopeMappings": [
+     {
+      "client": "auth-service-client-test",
+      "roles": ["ROLE_INTERNAL_SERVICE"]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "namespace": "com.mysillydreams.inventorycore.dto",
+  "type": "record",
+  "name": "ReservationSucceededEvent",
+  "fields": [
+    { "name": "orderId", "type": "string" }
+  ]
+}

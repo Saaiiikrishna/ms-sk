@@ -1,0 +1,153 @@
+spring:
+  application:
+    name: catalog-service
+  jpa:
+    hibernate:
+      ddl-auto: validate # Use validate for prod, update or create for dev against a real DB
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        implicit-strategy: org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy
+    show-sql: true # Set to false in prod
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        # For JSONB support with hibernate-types
+        # hibernate.type.json_format_mapper: com.fasterxml.jackson.databind.ObjectMapper
+        # hibernate.type.preferred_json_types: jsonb # For PostgreSQL
+  datasource:
+    url: jdbc:postgresql://localhost:5432/catalog_db # Replace with actual or Testcontainers URL for tests
+    username: user # Replace with actual username
+    password: password # Replace with actual password
+    driver-class-name: org.postgresql.Driver
+  kafka:
+    bootstrap-servers: localhost:9092 # Replace with actual Kafka brokers
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false # For simpler JSON messages without Java type info
+    consumer:
+      group-id: catalog-service-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.mysillydreams.* # Or specific DTO packages
+        spring.json.use.type.headers: false
+
+  # OpenSearch configuration (adjust as needed)
+opensearch:
+  uris: http://localhost:9200 # Comma-separated list if clustered
+  # username: admin # Optional
+  # password: password # Optional
+
+  # Redis Configuration
+  redis:
+    host: localhost
+    port: 6379
+    # password: yourpassword # if you have one set
+
+server:
+  port: 8082 # Different from other services
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# Logging example
+logging:
+  level:
+    root: INFO
+    com.mysillydreams.catalogservice: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: INFO
+    org.hibernate.SQL: DEBUG # To see SQL queries
+    org.hibernate.type.descriptor.sql: TRACE # To see parameters bound to SQL queries
+    org.apache.kafka: INFO
+
+# Custom Kafka Topic Names (application specific, not Spring Kafka properties)
+kafka:
+  topics:
+    dynamicPricingRule: dynamic.pricing.rule.events
+    priceOverride: price.override.events
+
+# Custom properties for Kafka topics
+app:
+  kafka:
+    topic:
+      category-created: category.created
+      category-updated: category.updated
+      category-deleted: category.deleted
+      item-created: catalog.item.created
+      item-updated: catalog.item.updated
+      item-deleted: catalog.item.deleted
+      price-updated: catalog.price.updated
+      stock-changed: stock.level.changed
+      bulk-rule-added: bulk.pricing.rule.added
+      cart-checked-out: cart.checked_out
+      # For SearchIndexer
+      catalog-events-for-indexing: catalog.events.for.indexing # Could be a single topic or multiple
+      # Topic for consuming price updates from pricing-engine
+      price-updated-from-engine: catalog.price.updated
+      # DLT for the price update listener
+      price-update-listener-dlt: catalog.price-update.dlt
+  outbox:
+    poll:
+      fixed-delay-ms: 10000 # Poll every 10 seconds
+      initial-delay-ms: 5000 # Start polling 5 seconds after app start
+      batch-size: 100 # Process up to 100 events per poll
+      max-attempts: 5 # Max attempts to publish an event before marking as failed (processed)
+      retry-delay-seconds: 300 # Wait 5 minutes before retrying a failed event (if not max attempts)
+    cleanup:
+      cron: "0 0 3 * * ?" # Daily at 3 AM
+      retention-days: "30" # Keep processed events for 30 days
+
+
+# Default active profile
+# spring.profiles.active: dev
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+  jpa:
+    hibernate:
+      ddl-auto: create-drop # Easier for tests
+  datasource:
+    url: jdbc:tc:postgresql:15.3-alpine:///test_catalog_db?TC_DAEMON=true
+    username: testuser
+    password: testpassword
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+  kafka:
+    bootstrap-servers: localhost:9092 # Will be overridden by EmbeddedKafka or Testcontainers Kafka
+  opensearch:
+    uris: http://localhost:9200 # Will be overridden by Testcontainers OpenSearch
+  redis:
+    host: localhost # Will be overridden by Testcontainers Redis or EmbeddedRedis
+    port: 6379
+
+logging:
+  level:
+    com.mysillydreams.catalogservice: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql: DEBUG
+    org.testcontainers: INFO
+    com.github.dockerjava: WARN # Reduce noise from Testcontainers docker interactions
+    org.apache.kafka: WARN # Reduce noise from Kafka test utilities
+
+app: # Adding topics under app.kafka.topic for test profile too for consistency
+  kafka:
+    topic:
+      price-updated-from-engine: catalog.price.updated.test # Example for test
+      price-update-listener-dlt: catalog.price-update.dlt.test # DLT for test

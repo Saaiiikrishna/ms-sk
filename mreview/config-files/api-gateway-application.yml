@@ -1,0 +1,163 @@
+spring:
+  application:
+    name: api-gateway
+  
+  # Cloud Gateway Configuration
+  cloud:
+    gateway:
+      # Global CORS configuration
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+      
+      # Default filters applied to all routes
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - AddRequestHeader=X-Gateway-Source, api-gateway
+        - AddResponseHeader=X-Gateway-Response, true
+      
+      # Discovery client route locator
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+          
+    # Zookeeper Configuration
+    zookeeper:
+      connect-string: ${ZOOKEEPER_CONNECT_STRING:localhost:2181}
+      config:
+        enabled: true
+        root: /mysillydreams
+        default-context: ${ENVIRONMENT:dev}
+        profile-separator: ','
+
+# Server Configuration
+server:
+  port: ${SERVER_PORT:8080}
+
+# Eureka Client Configuration
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka/}
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+# Management and Monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+    gateway:
+      enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://zipkin:9411/api/v2/spans}
+
+# Redis Configuration for Rate Limiting
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  timeout: 2000ms
+  lettuce:
+    pool:
+      max-active: 8
+      max-idle: 8
+      min-idle: 0
+
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET:LocalJwtSecretKeyForDevelopmentMinimum256BitsLong123456789!}
+
+# Circuit Breaker Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      auth-service-cb:
+        register-health-indicator: true
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        wait-duration-in-open-state: 30s
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 2s
+      user-service-cb:
+        register-health-indicator: true
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        wait-duration-in-open-state: 30s
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 2s
+
+# Logging Configuration
+logging:
+  level:
+    com.mysillydreams.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO
+    org.springframework.security: INFO
+    reactor.netty: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n"
+
+---
+# Local Development Profile
+spring:
+  config:
+    activate:
+      on-profile: local
+
+# Local Zookeeper
+spring.cloud.zookeeper:
+  connect-string: localhost:2181
+
+# Local Redis
+spring.data.redis:
+  host: localhost
+  port: 6379
+
+# Local Eureka
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+# Local Zipkin
+management:
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  level:
+    com.mysillydreams.gateway: DEBUG

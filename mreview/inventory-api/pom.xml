@@ -1,0 +1,181 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <!-- Assuming a parent POM 'ecommerce-platform' exists in your local .m2 or a remote repo -->
+        <!-- If not, this section should be removed or adjusted -->
+        <groupId>com.mysillydreams</groupId>
+        <artifactId>ecommerce-platform</artifactId>
+        <version>1.0.0</version>
+        <relativePath/> <!-- Adjust if the parent is in a multi-module project structure -->
+    </parent>
+
+    <artifactId>inventory-api</artifactId> <!-- groupId and version are inherited from parent -->
+    <!-- Explicitly setting version as per instruction, though typically inherited -->
+    <version>1.0.0</version>
+    <name>inventory-api</name>
+    <description>Inventory API Service</description>
+
+    <properties>
+        <!-- Properties from parent might be inherited. Define here if specific to this module or overriding. -->
+        <java.version>17</java.version>
+        <keycloak.version>19.0.3</keycloak.version> <!-- Ensure this matches your Keycloak server version -->
+        <springdoc-openapi-ui.version>1.6.14</springdoc-openapi-ui.version>
+        <resilience4j.version>1.7.1</resilience4j.version> <!-- Check for latest Spring Boot 2 compatible version -->
+        <testcontainers.version>1.17.6</testcontainers.version>
+         <!-- Ensure spring-boot.version is managed by the anscestor spring-boot-starter-parent -->
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Manage Keycloak BOM -->
+            <dependency>
+                <groupId>org.keycloak.bom</groupId>
+                <artifactId>keycloak-adapter-bom</artifactId>
+                <version>${keycloak.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Manage Testcontainers BOM -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Resilience4j BOM (if using multiple Resilience4j modules) -->
+            <dependency>
+                <groupId>io.github.resilience4j</groupId>
+                <artifactId>resilience4j-bom</artifactId>
+                <version>${resilience4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Web & Validation -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- JPA & Postgres -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Kafka -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!-- Security & Keycloak -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-spring-boot-starter</artifactId>
+            <!-- Version managed by Keycloak BOM -->
+        </dependency>
+        <!-- Removed keycloak-admin-client as it's not in the new spec -->
+
+        <!-- Actuator & Metrics -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- OpenAPI / Swagger -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-ui</artifactId>
+            <version>${springdoc-openapi-ui.version}</version>
+        </dependency>
+
+        <!-- Resilience4j -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot2</artifactId>
+            <!-- Version managed by Resilience4j BOM -->
+        </dependency>
+         <dependency> <!-- Required for @CircuitBreaker annotation -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency> <!-- For @Testcontainers and JUnit Jupiter integration -->
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Keycloak Testcontainers if needed for security integration tests -->
+        <!-- <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>keycloak</artifactId>
+            <scope>test</scope>
+        </dependency> -->
+    </dependencies>
+
+    <build>
+        <finalName>${project.artifactId}</finalName> <!-- Produces inventory-api.jar -->
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

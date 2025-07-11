@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventory-api-config
+data:
+  DB_HOST: "postgres.dev.svc.cluster.local"
+  DB_NAME: "inventorydb"
+  KAFKA_BROKER: "kafka.dev.svc.cluster.local:9092"
+  KEYCLOAK_URL: "https://keycloak.dev.svc.cluster.local/auth"

@@ -1,0 +1,13 @@
+{
+  "namespace": "com.mysillydreams.payment.dto",
+  "type": "record",
+  "name": "RefundRequestedEvent",
+  "fields": [
+    { "name": "refundId", "type": "string" }, // A unique ID for this refund attempt
+    { "name": "paymentId", "type": "string" }, // The original Razorpay Payment ID
+    { "name": "orderId", "type": "string" }, // The original Order ID, for context
+    { "name": "amount", "type": "double" }, // Amount to be refunded
+    { "name": "currency", "type": "string" }, // Currency of the refund
+    { "name": "reason", "type": ["null", "string"], "default": null }
+  ]
+}

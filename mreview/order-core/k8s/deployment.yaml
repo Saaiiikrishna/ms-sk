@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-core-deployment
+  namespace: default # Or your target namespace
+  labels:
+    app: order-core
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: order-core
+  template:
+    metadata:
+      labels:
+        app: order-core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080" # Port Actuator runs on (Spring Boot default)
+    spec:
+      # serviceAccountName: order-core-sa # If using specific service account for K8s permissions
+      containers:
+      - name: order-core
+        image: your-docker-registry/order-core:latest # Replace with your image
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080 # Application port
+        # - name: management # If actuator runs on a different port
+        #   containerPort: 8081
+        envFrom:
+        - configMapRef:
+            name: order-core-config
+        - secretRef:
+            name: order-core-secret
+        # Optional: Set JAVA_OPTS for memory, etc.
+        # env:
+        # - name: JAVA_OPTS
+        #   value: "-Xms512m -Xmx1024m -Djava.security.egd=file:/dev/./urandom"
+        resources:
+          requests:
+            memory: "768Mi" # Adjust based on needs
+            cpu: "500m"    # 0.5 vCPU
+          limits:
+            memory: "1536Mi"
+            cpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness # Spring Boot Actuator readiness
+            port: http # Refers to containerPort name 'http' (8080)
+          initialDelaySeconds: 45 # Longer delay for services with DB/Kafka connections
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness # Spring Boot Actuator liveness
+            port: http
+          initialDelaySeconds: 90 # Longer initial delay
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+      # imagePullSecrets:
+      # - name: your-registry-secret # If using a private Docker registry
+---
+# Notes:
+# - Replace 'your-docker-registry/order-core:latest' with your actual image URI.
+# - Adjust `replicas`, `resources`, `initialDelaySeconds` for probes based on observed behavior.
+# - Liveness/Readiness probes:
+#   - The plan suggests probes check DB, Kafka, Schema Registry.
+#   - Spring Boot Actuator's default `/actuator/health` endpoint includes health indicators for
+#     DataSource, Kafka, etc., if they are on the classpath and configured.
+#   - Ensure `spring-boot-starter-actuator` is included.
+#   - Custom HealthIndicators can be implemented for more specific checks if needed.
+#   - `management.endpoint.health.probes.enabled=true` in application.yml helps Actuator tailor these.
+# - Prometheus annotations assume Actuator's Prometheus endpoint is enabled at /actuator/prometheus on port 8080.
+# - `serviceAccountName` can be specified if Order-Core needs specific K8s API permissions (e.g., for Kafka consumer lag metrics for HPA via KEDA).

@@ -1,0 +1,45 @@
+{
+  "namespace": "com.ecommerce.vendorfulfillmentservice.event.avro",
+  "type": "record",
+  "name": "VendorOrderReassignedEvent",
+  "doc": "Event emitted when an order assignment is reassigned to a different vendor by an admin.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "Unique ID for this event."
+    },
+    {
+      "name": "assignmentId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the vendor order assignment."
+    },
+    {
+      "name": "orderId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the customer order."
+    },
+    {
+      "name": "oldVendorId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the vendor from whom the order was reassigned."
+    },
+    {
+      "name": "newVendorId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the vendor to whom the order is now assigned."
+    },
+    {
+      "name": "timestamp",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "Timestamp when the event occurred (epoch milliseconds)."
+    },
+    {
+      "name": "reassignedBy",
+      "type": ["null", { "type": "string", "logicalType": "uuid" }], "default": null,
+      "doc": "ID of the admin user who performed the reassignment, if available."
+    }
+    // The 'status' field on the assignment itself will likely be reset to ASSIGNED for the new vendor.
+    // This event primarily signals the change of vendors.
+  ]
+}

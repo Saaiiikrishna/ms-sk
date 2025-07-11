@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: mysillydreams
+  labels:
+    app: auth-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: mysillydreams/auth-service:latest
+        ports:
+        - containerPort: 8081
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: SPRING_PROFILES_ACTIVE
+        - name: DB_HOST
+          value: "postgres-auth-service"
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: AUTH_DB_NAME
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: DB_USER
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: DB_PASS
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_PORT
+        - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: EUREKA_SERVER_URL
+        - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+          value: "http://zipkin-service:9411/api/v2/spans"
+        - name: SPRING_BOOT_ADMIN_CLIENT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: ADMIN_SERVER_URL
+        - name: KEYCLOAK_SERVER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: KEYCLOAK_SERVER_URL
+        - name: KEYCLOAK_REALM
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: KEYCLOAK_REALM
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 90
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        imagePullPolicy: IfNotPresent
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: mysillydreams
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 8081
+    targetPort: 8081
+  type: ClusterIP
+
+---
+# NodePort service for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-nodeport
+  namespace: mysillydreams
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 8081
+    targetPort: 8081
+    nodePort: 30081
+  type: NodePort

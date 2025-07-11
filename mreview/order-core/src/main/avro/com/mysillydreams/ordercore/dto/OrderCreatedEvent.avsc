@@ -1,0 +1,26 @@
+{
+  "namespace": "com.mysillydreams.ordercore.dto.avro",
+  "type": "record",
+  "name": "OrderCreatedEvent",
+  "doc": "Event published when an order is successfully created and persisted in Order-Core.",
+  "fields": [
+    {"name": "orderId", "type": "string", "doc": "UUID of the order"},
+    {"name": "customerId", "type": "string", "doc": "UUID of the customer"},
+    {"name": "orderType", "type": {
+        "type": "enum",
+        "name": "OrderTypeAvro",
+        "symbols": ["CUSTOMER", "RESTOCK"]}, "doc": "Type of the order"
+    },
+    {
+      "name": "items",
+      "type": {
+        "type": "array",
+        "items": "com.mysillydreams.ordercore.dto.avro.LineItem"
+      },
+      "doc": "List of items in the order"
+    },
+    {"name": "totalAmount", "type": "double", "doc": "Total amount of the order"},
+    {"name": "currency", "type": "string", "doc": "ISO 4217 currency code"},
+    {"name": "createdAt", "type": "long", "logicalType": "timestamp-millis", "doc": "Timestamp of order creation in epoch milliseconds"}
+  ]
+}

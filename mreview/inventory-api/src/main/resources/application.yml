@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: inventory-api
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:inventorydb}
+    username: ${DB_USER:inventory} # Updated default username
+    password: ${DB_PASS:inventory} # Updated default password
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false # As specified
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # format_sql: true # Optional: for logging SQL (removed as show-sql is false)
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKER:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer # As specified
+      # properties: # Properties like ACKS can be set here or in KafkaProducerConfig
+        # spring.json.add.type.headers: false # Default for JsonSerializer
+        # acks: all # This is better set in KafkaProducerConfig as per new spec
+    # topics: # This is a custom structure, better to define topics in dedicated kafka.topics map
+      # reservationRequested: order.reservation.requested # Moved to kafka.topics
+
+  # Spring Security OAuth2 Resource Server properties (Alternative to Keycloak adapter for pure Spring Security)
+  # security:
+    # oauth2:
+      # resourceserver:
+        # jwt:
+          # issuer-uri: ${keycloak.auth-server-url}/realms/${keycloak.realm}
+          # jwk-set-uri: ${keycloak.auth-server-url}/realms/${keycloak.realm}/protocol/openid-connect/certs
+
+# Keycloak specific properties for Spring Boot adapter (keycloak-spring-boot-starter)
+keycloak:
+  realm: ${KEYCLOAK_REALM:MyRealm} # Updated realm
+  auth-server-url: ${KEYCLOAK_URL:http://localhost:8080}/auth # Updated property name and path
+  resource: ${KEYCLOAK_CLIENT_ID:inventory-api-client} # Client ID this service represents (resource server)
+  credentials:
+    secret: ${KEYCLOAK_SECRET} # Client secret
+  bearer-only: true # As specified
+  # public-client: false # Implied by bearer-only and secret (though bearer-only is the primary setting)
+  # ssl-required: external # Recommended for production
+  # use-resource-role-mappings: true # If Keycloak roles are realm roles. False if client roles. Default is false.
+
+kafka: # Dedicated section for topic names as per initial multi-phase plan, good practice
+  topics:
+    reservationRequested: ${RESERVATION_REQUESTED_TOPIC:order.reservation.requested}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,info # As specified
+  endpoint:
+    health:
+      show-details: when_authorized # Or "always" / "never"
+      # roles: ACTUATOR_ADMIN # Example role to secure details if using Spring Security roles
+
+server:
+  port: ${SERVER_PORT:8081} # Default port for inventory-api
+
+# Springdoc OpenAPI properties (optional, defaults are usually fine)
+springdoc:
+  api-docs:
+    path: /api-docs # Default is /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html # Default path
+
+# Logging (optional)
+logging:
+  level:
+    root: INFO
+    com.mysillydreams.inventoryapi: DEBUG
+    org.springframework.security: INFO # Reduce default Keycloak logging unless debugging
+    # org.hibernate.SQL: DEBUG # If more detailed SQL logging is needed than show-sql=true
+    # org.hibernate.type.descriptor.sql: TRACE
+
+# Resilience4j default configurations (optional)
+# resilience4j.circuitbreaker:
+#   configs:
+#     default:
+#       registerHealthIndicator: true
+#       slidingWindowSize: 100
+#       minimumNumberOfCalls: 20
+#       permittedNumberOfCallsInHalfOpenState: 5
+#       automaticTransitionFromOpenToHalfOpenEnabled: true
+#       waitDurationInOpenState: 60s
+#       failureRateThreshold: 50
+#       eventConsumerBufferSize: 10
+# resilience4j.retry:
+#   configs:
+#     default:
+#       maxAttempts: 3
+#       waitDuration: 100ms
+#       retryExceptions:
+#         - java.io.IOException
+#         - java.util.concurrent.TimeoutException
+#       ignoreExceptions:
+#         - com.mysillydreams.inventoryapi.exception.BusinessValidationException
+# resilience4j.ratelimiter:
+#   configs:
+#     default:
+#       registerHealthIndicator: false
+#       limitForPeriod: 10
+#       limitRefreshPeriod: 1s
+#       timeoutDuration: 0s
+# resilience4j.bulkhead:
+#   configs:
+#     default:
+#       maxConcurrentCalls: 100
+#       maxWaitDuration: 0ms
+# resilience4j.thread-pool-bulkhead:
+#   configs:
+#     default:
+#       maxThreadPoolSize: 10
+#       coreThreadPoolSize: 2
+#       queueCapacity: 100
+#       keepAliveDuration: 20ms
+# resilience4j.timelimiter:
+#   configs:
+#     default:
+#       timeoutDuration: 2s
+#       cancelRunningFuture: true

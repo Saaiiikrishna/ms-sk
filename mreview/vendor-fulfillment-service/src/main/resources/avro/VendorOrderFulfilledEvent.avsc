@@ -1,0 +1,43 @@
+{
+  "namespace": "com.ecommerce.vendorfulfillmentservice.event.avro",
+  "type": "record",
+  "name": "VendorOrderFulfilledEvent",
+  "doc": "Event emitted when an order fulfillment is completed by the vendor.",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "Unique ID for this event."
+    },
+    {
+      "name": "assignmentId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the vendor order assignment."
+    },
+    {
+      "name": "orderId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the customer order."
+    },
+    {
+      "name": "vendorId",
+      "type": { "type": "string", "logicalType": "uuid" },
+      "doc": "The ID of the assigned vendor."
+    },
+    {
+      "name": "timestamp",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "Timestamp when the event occurred (epoch milliseconds)."
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "doc": "The status of the assignment, should be FULFILLED for this event."
+    },
+    {
+      "name": "trackingNo",
+      "type": ["null", "string"], "default": null,
+      "doc": "Tracking number, if applicable, carried over from shipment."
+    }
+  ]
+}

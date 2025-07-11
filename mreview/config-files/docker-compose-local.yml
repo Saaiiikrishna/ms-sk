@@ -1,0 +1,190 @@
+version: '3.8'
+
+services:
+  # PostgreSQL for Keycloak
+  postgres-keycloak:
+    image: postgres:15-alpine
+    container_name: postgres-keycloak-local
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_keycloak_data:/var/lib/postgresql/data
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Keycloak
+  keycloak:
+    image: keycloak/keycloak:23.0.7
+    container_name: keycloak-local
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-keycloak:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres123
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KC_METRICS_ENABLED: true
+    ports:
+      - "8180:8080"
+    depends_on:
+      postgres-keycloak:
+        condition: service_healthy
+    command:
+      - start-dev
+      - --import-realm
+    volumes:
+      - ./keycloak/realm-config.json:/opt/keycloak/data/import/realm-config.json:ro
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # HashiCorp Vault
+  vault:
+    image: hashicorp/vault:1.15.2
+    container_name: vault-local
+    environment:
+      VAULT_ADDR: http://127.0.0.1:8200
+      VAULT_API_ADDR: http://vault:8200
+      VAULT_DEV_ROOT_TOKEN_ID: root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    command: ["vault", "server", "-dev", "-dev-listen-address=0.0.0.0:8200", "-dev-root-token-id=root-token"]
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault_data:/vault/data
+      - ./scripts/init-vault-local.sh:/vault/init-vault.sh:ro
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD-SHELL", "vault status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zipkin for distributed tracing
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin-local
+    environment:
+      STORAGE_TYPE: mem
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    ports:
+      - "9411:9411"
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9411/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Zookeeper for Configuration Management
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper-local
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: redis-local
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for Auth Service
+  postgres-auth:
+    image: postgres:15-alpine
+    container_name: postgres-auth-local
+    environment:
+      POSTGRES_DB: authdb
+      POSTGRES_USER: authuser
+      POSTGRES_PASSWORD: authpass123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_auth_data:/var/lib/postgresql/data
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL for User Service
+  postgres-user:
+    image: postgres:15-alpine
+    container_name: postgres-user-local
+    environment:
+      POSTGRES_DB: userdb
+      POSTGRES_USER: useruser
+      POSTGRES_PASSWORD: userpass123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_user_data:/var/lib/postgresql/data
+    networks:
+      - mysillydreams-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U useruser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_keycloak_data:
+  postgres_auth_data:
+  postgres_user_data:
+  vault_data:
+  redis_data:
+  zookeeper_data:
+  zookeeper_logs:
+
+networks:
+  mysillydreams-local:
+    driver: bridge
