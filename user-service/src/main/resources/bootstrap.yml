@@ -1,10 +1,10 @@
-# Eureka Server Bootstrap Configuration
+# User Service Bootstrap Configuration
 # PRODUCTION HARDENED - NO HARDCODED SECRETS OR CONFIGURATIONS
 # ALL configuration must be loaded from Zookeeper
 
 spring:
   application:
-    name: eureka-server
+    name: user-service
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
   config:
@@ -14,11 +14,11 @@ spring:
       connect-string: ${ZOOKEEPER_CONNECT:zookeeper:2181}
       config:
         enabled: true
-        default-context: ${ZOOKEEPER_CONFIG_PATH:/config/local/eureka-server}
+        default-context: ${ZOOKEEPER_CONFIG_PATH:/config/local/user-service}
 
 # MINIMAL server configuration - port only
 server:
-  port: ${SERVER_PORT:8761}
+  port: ${SERVER_PORT:8082}
 
 # MINIMAL logging - everything else from Zookeeper
 logging:

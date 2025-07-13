@@ -5,7 +5,9 @@ import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SignatureException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.core.env.Environment;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -25,10 +27,10 @@ public class JwtTokenProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(JwtTokenProvider.class);
 
-    @Value("${jwt.secret}")
-    private String jwtSecretString;
+    @Autowired
+    private Environment environment;
 
-    @Value("${jwt.expiration-ms}")
+    private String jwtSecretString;
     private long jwtExpirationInMs;
 
     private SecretKey jwtSecretKey;
@@ -36,6 +38,32 @@ public class JwtTokenProvider {
 
     @PostConstruct
     public void init() {
+        // Load properties from Environment (this ensures Zookeeper properties are loaded)
+        jwtSecretString = environment.getProperty("jwt.secret");
+        jwtExpirationInMs = environment.getProperty("jwt.expiration-ms", Long.class, 86400000L);
+
+        logger.info("JWT secret loaded: {}", jwtSecretString != null ? "YES" : "NO");
+        logger.info("JWT expiration loaded: {} ms", jwtExpirationInMs);
+
+        // Try to get the property from specific property sources if not found in Environment
+        if (jwtSecretString == null && environment instanceof ConfigurableEnvironment) {
+            ConfigurableEnvironment configurableEnv = (ConfigurableEnvironment) environment;
+            configurableEnv.getPropertySources().forEach(ps -> {
+                if (ps.getName().contains("zookeeper") || ps.getName().contains("bootstrap")) {
+                    if (ps.getSource() instanceof java.util.Map) {
+                        @SuppressWarnings("unchecked")
+                        java.util.Map<String, Object> map = (java.util.Map<String, Object>) ps.getSource();
+                        if (map.containsKey("jwt.secret")) {
+                            logger.info("Found jwt.secret in property source: {}", ps.getName());
+                            jwtSecretString = (String) map.get("jwt.secret");
+                        }
+                    }
+                }
+            });
+        }
+
+        logger.info("Final JWT secret loaded: {}", jwtSecretString != null ? "YES" : "NO");
+
         // Ensure the secret key is strong enough for HS512
         if (jwtSecretString == null || jwtSecretString.length() < 64) { // HS512 needs a key of at least 512 bits (64 bytes/chars for a safe string)
             logger.warn("JWT secret is weak or not configured. Using a default, insecure key. THIS IS NOT SAFE FOR PRODUCTION.");

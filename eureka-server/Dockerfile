@@ -1,29 +1,23 @@
 # Multi-stage build for Eureka Server
-FROM openjdk:17-jdk-slim as builder
+FROM maven:3.9.6-eclipse-temurin-17 as builder
 
 # Set working directory
 WORKDIR /app
 
-# Copy Maven wrapper and pom.xml
-COPY mvnw .
-COPY mvnw.cmd .
-COPY .mvn .mvn
+# Copy pom.xml first for better caching
 COPY pom.xml .
 
-# Make mvnw executable
-RUN chmod +x mvnw
-
 # Download dependencies
-RUN ./mvnw dependency:go-offline -B
+RUN mvn dependency:go-offline -B
 
 # Copy source code
 COPY src src
 
 # Build the application
-RUN ./mvnw clean package -DskipTests -B
+RUN mvn clean package -DskipTests -B
 
 # Production stage
-FROM openjdk:17-jre-slim
+FROM eclipse-temurin:17-jre
 
 # Install curl for health checks
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*

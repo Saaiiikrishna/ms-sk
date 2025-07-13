@@ -1,0 +1,87 @@
+# User Service Deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+  namespace: mysillydreams-dev
+data:
+  # Bootstrap configuration only - all other config comes from Zookeeper
+  SPRING_PROFILES_ACTIVE: "kubernetes"
+  ENVIRONMENT: "dev"
+  ZOOKEEPER_CONNECT_STRING: "zookeeper.mysillydreams-dev:2181"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+      - name: user-service
+        image: saaiiikrishna/user-service:dev-v1.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8082
+          name: http
+        envFrom:
+        - configMapRef:
+            name: user-service-config
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms512m -Xmx1024m -XX:+UseG1GC -XX:+UseContainerSupport"
+        - name: ZOOKEEPER_CONNECT_STRING
+          valueFrom:
+            configMapKeyRef:
+              name: user-service-config
+              key: ZOOKEEPER_CONNECT_STRING
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8082
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8082
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+spec:
+  ports:
+  - port: 8082
+    targetPort: 8082
+    name: http
+  selector:
+    app: user-service

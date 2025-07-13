@@ -1,0 +1,97 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres-user.mysillydreams-dev:5432/userdb
+    username: useruser
+    password: userpass123
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+  redis:
+    host: redis.mysillydreams-dev
+    port: 6379
+    database: 1
+    timeout: 2000ms
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server.mysillydreams-dev:8761/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+keycloak:
+  auth-server-url: http://keycloak.mysillydreams-dev:8080
+  realm: MySillyDreams-Realm
+  admin-client:
+    client-id: admin-cli
+    username: admin
+    password: admin123
+
+jwt:
+  secret: mySecretKey123456789012345678901234567890
+  expiration-ms: 86400000
+  refresh-expiration-ms: 604800000
+
+app:
+  simple-encryption:
+    secret-key: TestEncryptionKeyForProduction123456789!
+  mfa:
+    issuer-name: MySillyDreamsPlatform
+  internal-api:
+    secret-key: TestInternalApiKeyForProduction123456789!
+  cors:
+    allowed-origins: http://localhost:3000,http://localhost:3001,http://localhost:8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  security:
+    enabled: false
+  zipkin:
+    tracing:
+      endpoint: http://zipkin.mysillydreams-dev:9411/api/v2/spans
+
+vault:
+  uri: http://vault.mysillydreams-dev:8200
+  token: dev-only-token
+
+logging:
+  level:
+    root: INFO
+    com.mysillydreams.user: DEBUG
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

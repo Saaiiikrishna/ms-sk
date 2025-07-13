@@ -96,6 +96,12 @@
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
 
+        <!-- Bootstrap support for Spring Cloud -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bootstrap</artifactId>
+        </dependency>
+
         <!-- Zookeeper for Configuration Management -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

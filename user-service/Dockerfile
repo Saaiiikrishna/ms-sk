@@ -8,14 +8,14 @@ COPY src ./src
 RUN mvn clean package -DskipTests -Dmaven.test.skip=true
 
 # Stage 2: Create the runtime image
-FROM eclipse-temurin:17-jdk-alpine
+FROM eclipse-temurin:17-jre
 
 LABEL maintainer="MySillyDreams Platform Team"
 LABEL version="0.0.1"
 LABEL description="User Service for MySillyDreams Platform"
 
 # Create a non-root user and group
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 # Set the working directory
 WORKDIR /app
@@ -32,9 +32,12 @@ USER appuser
 # Expose the port
 EXPOSE 8082
 
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD wget -q -O /dev/null http://localhost:8082/actuator/health || exit 1
+  CMD curl --fail http://localhost:8082/actuator/health || exit 1
 
 # Entry point to run the application
 # -Xms and -Xmx should be tuned based on expected load and available resources.
