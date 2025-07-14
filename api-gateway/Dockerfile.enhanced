@@ -1,0 +1,117 @@
+# Enhanced Multi-stage Dockerfile for API Gateway with robust Maven configuration
+FROM maven:3.9.6-eclipse-temurin-17 as builder
+
+# Set working directory
+WORKDIR /app
+
+# Install network diagnostic tools for troubleshooting
+RUN apt-get update && apt-get install -y \
+    curl \
+    dnsutils \
+    iputils-ping \
+    telnet \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create .m2 directory and copy enhanced Maven settings
+RUN mkdir -p /root/.m2
+COPY maven-settings.xml /root/.m2/settings.xml
+
+# Set enhanced Maven options for better connectivity
+ENV MAVEN_OPTS="-Dmaven.wagon.http.connectionTimeout=300000 \
+                -Dmaven.wagon.http.readTimeout=300000 \
+                -Dmaven.wagon.rto=300000 \
+                -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+                -Dmaven.wagon.http.retryHandler.count=5 \
+                -Dmaven.wagon.http.retryHandler.requestSentEnabled=true \
+                -Dmaven.wagon.http.pool=true \
+                -Dmaven.wagon.httpconnectionManager.maxPerRoute=10 \
+                -Dmaven.wagon.httpconnectionManager.maxTotal=50 \
+                -Xmx2048m \
+                -XX:+UseG1GC"
+
+# Network diagnostics (optional - can be removed in production)
+RUN echo "=== Network Diagnostics ===" && \
+    echo "DNS Resolution Test:" && \
+    nslookup repo.maven.apache.org || true && \
+    echo "Connectivity Test:" && \
+    curl -I --connect-timeout 30 --max-time 60 https://repo.maven.apache.org/maven2/ || true && \
+    echo "Google Maven Mirror Test:" && \
+    curl -I --connect-timeout 30 --max-time 60 https://maven-central.storage-download.googleapis.com/maven2/ || true
+
+# Copy pom.xml first for better Docker layer caching
+COPY pom.xml .
+
+# Download dependencies with enhanced error handling and retries
+RUN echo "=== Starting Dependency Download ===" && \
+    mvn dependency:go-offline -B -e -X \
+    -Dmaven.wagon.http.connectionTimeout=300000 \
+    -Dmaven.wagon.http.readTimeout=300000 \
+    -Dmaven.wagon.rto=300000 \
+    -Dmaven.wagon.http.retryHandler.count=5 \
+    || (echo "First attempt failed, retrying with different mirror..." && \
+        mvn dependency:go-offline -B -e \
+        -Dmaven.wagon.http.connectionTimeout=300000 \
+        -Dmaven.wagon.http.readTimeout=300000 \
+        -Dmaven.wagon.rto=300000 \
+        -Dmaven.wagon.http.retryHandler.count=5) \
+    || (echo "Second attempt failed, trying with Google mirror..." && \
+        mvn dependency:go-offline -B -e \
+        -Dmaven.wagon.http.connectionTimeout=300000 \
+        -Dmaven.wagon.http.readTimeout=300000 \
+        -Dmaven.wagon.rto=300000 \
+        -Dmaven.wagon.http.retryHandler.count=5 \
+        -Dmaven.repo.central=https://maven-central.storage-download.googleapis.com/maven2/)
+
+# Copy source code
+COPY src src
+
+# Build the application with enhanced configuration
+RUN echo "=== Starting Application Build ===" && \
+    mvn clean package -DskipTests -B -e \
+    -Dmaven.wagon.http.connectionTimeout=300000 \
+    -Dmaven.wagon.http.readTimeout=300000 \
+    -Dmaven.wagon.rto=300000
+
+# Verify the JAR was created
+RUN ls -la target/ && \
+    echo "Build completed successfully!"
+
+# Production stage - minimal runtime image
+FROM eclipse-temurin:17-jre
+
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy the built JAR from builder stage
+COPY --from=builder /app/target/*.jar app.jar
+
+# Change ownership to non-root user
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
+# JVM optimization for containers
+ENV JAVA_OPTS="-XX:+UseContainerSupport \
+               -XX:MaxRAMPercentage=75.0 \
+               -XX:+UseG1GC \
+               -XX:+UseStringDeduplication \
+               -XX:+OptimizeStringConcat \
+               -XX:+UseCompressedOops \
+               -Djava.security.egd=file:/dev/./urandom"
+
+# Run the application
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

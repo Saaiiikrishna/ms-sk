@@ -1,0 +1,155 @@
+# Admin Server Deployment - Production-Ready with ZooKeeper Configuration Management
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admin-server-config
+  namespace: mysillydreams-dev
+data:
+  # Bootstrap configuration only - all other config comes from Zookeeper
+  SPRING_PROFILES_ACTIVE: "dev"
+  ENVIRONMENT: "dev"
+  ZOOKEEPER_CONNECT_STRING: "zookeeper.mysillydreams-dev:2181"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-server
+  namespace: mysillydreams-dev
+  labels:
+    app: admin-server
+    component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-server
+  template:
+    metadata:
+      labels:
+        app: admin-server
+        component: monitoring
+    spec:
+      # Add init container to wait for ZooKeeper
+      initContainers:
+      - name: wait-for-zookeeper
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for ZooKeeper to be ready..."
+          until nc -z zookeeper.mysillydreams-dev 2181; do
+            echo "ZooKeeper not ready, waiting..."
+            sleep 5
+          done
+          echo "ZooKeeper is ready!"
+      - name: wait-for-eureka
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for Eureka Server to be ready..."
+          until nc -z eureka-server.mysillydreams-dev 8761; do
+            echo "Eureka Server not ready, waiting..."
+            sleep 5
+          done
+          echo "Eureka Server is ready!"
+      containers:
+      - name: admin-server
+        image: saaiiikrishna/admin-server:config-v1.1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8083
+          name: http
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx512m -XX:+UseG1GC -XX:+UseContainerSupport"
+        - name: ZOOKEEPER_CONNECT_STRING
+          value: "zookeeper.mysillydreams-dev:2181"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "dev"
+        - name: ENVIRONMENT
+          value: "dev"
+        - name: SERVER_PORT
+          value: "8083"
+        - name: ROOT_LOG_LEVEL
+          value: "INFO"
+        # Zipkin configuration
+        - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+          value: "http://zipkin.mysillydreams-dev:9411/api/v2/spans"
+        - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+          value: "1.0"
+        # Admin credentials
+        - name: ADMIN_USERNAME
+          value: "admin"
+        - name: ADMIN_PASSWORD
+          value: "admin123"
+        # Spring Config Import for ZooKeeper
+        - name: SPRING_CONFIG_IMPORT
+          value: "zookeeper:zookeeper.mysillydreams-dev:2181"
+        # Application Name for Eureka and Zipkin
+        - name: SPRING_APPLICATION_NAME
+          value: "admin-server"
+        # Eureka Configuration
+        - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+          value: "http://eureka-server.mysillydreams-dev:8761/eureka/"
+        - name: EUREKA_CLIENT_REGISTER_WITH_EUREKA
+          value: "true"
+        - name: EUREKA_CLIENT_FETCH_REGISTRY
+          value: "true"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8083
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8083
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server
+  namespace: mysillydreams-dev
+  labels:
+    app: admin-server
+spec:
+  ports:
+  - port: 8083
+    targetPort: 8083
+    name: http
+  selector:
+    app: admin-server
+---
+# NodePort Service for external access to Admin Server UI
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server-external
+  namespace: mysillydreams-dev
+  labels:
+    app: admin-server
+spec:
+  type: NodePort
+  ports:
+  - port: 8083
+    targetPort: 8083
+    nodePort: 30083
+    name: http
+  selector:
+    app: admin-server
