@@ -175,7 +175,7 @@ data:
     spring.cloud.vault.port=8200
     spring.cloud.vault.scheme=http
     spring.cloud.vault.authentication=TOKEN
-    spring.cloud.vault.token=
+    spring.cloud.vault.token=hvs.CAESIJ2P7AR2wJNymXIz-anbW-69xnWj0IZnvVSbCgF5Ar26Gh4KHGh2cy5ycVJzVGhOcWJHVnNkVzVoYm5jdGJuVnM
 
     # JWT Configuration
     jwt.secret=MySecretJWTKeyForProductionUse123456789!
