@@ -1,0 +1,115 @@
+# HashiCorp Vault Deployment
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-pvc
+  namespace: mysillydreams-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: mysillydreams-dev
+  labels:
+    app: vault
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      containers:
+      - name: vault
+        image: hashicorp/vault:1.15.2
+        ports:
+        - containerPort: 8200
+        env:
+        - name: VAULT_ADDR
+          value: "http://127.0.0.1:8200"
+        - name: VAULT_API_ADDR
+          value: "http://vault:8200"
+        - name: VAULT_DEV_ROOT_TOKEN_ID
+          value: "root-token"
+        - name: VAULT_DEV_LISTEN_ADDRESS
+          value: "0.0.0.0:8200"
+        command:
+        - vault
+        - server
+        - -dev
+        - -dev-listen-address=0.0.0.0:8200
+        - -dev-root-token-id=root-token
+        securityContext:
+          capabilities:
+            add:
+            - IPC_LOCK
+        volumeMounts:
+        - mountPath: /vault/data
+          name: vault-storage
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /v1/sys/health
+            port: 8200
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /v1/sys/health
+            port: 8200
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: vault-storage
+        persistentVolumeClaim:
+          claimName: vault-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: mysillydreams-dev
+  labels:
+    app: vault
+spec:
+  ports:
+  - port: 8200
+    targetPort: 8200
+  selector:
+    app: vault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-nodeport
+  namespace: mysillydreams-dev
+  labels:
+    app: vault
+spec:
+  type: NodePort
+  ports:
+  - port: 8200
+    targetPort: 8200
+    nodePort: 30200
+  selector:
+    app: vault

@@ -1,0 +1,38 @@
+# Admin Server Bootstrap Configuration
+# This is the ONLY configuration file - all other config comes from Zookeeper
+
+spring:
+  application:
+    name: admin-server
+  config:
+    import: "optional:zookeeper:${ZOOKEEPER_CONNECT_STRING:zookeeper:2181}"
+  cloud:
+    zookeeper:
+      connect-string: ${ZOOKEEPER_CONNECT_STRING:zookeeper:2181}
+      config:
+        enabled: true
+        root: /mysillydreams
+        default-context: ${ENVIRONMENT:dev}/admin-server
+        profile-separator: ','
+  profiles:
+    active: ${ENVIRONMENT:dev}
+
+# Basic server configuration (minimal required)
+server:
+  port: 8083
+
+# Basic management endpoints (will be overridden by Zookeeper)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans

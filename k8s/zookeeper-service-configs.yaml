@@ -1,0 +1,271 @@
+# ZooKeeper Service Configurations ConfigMap
+# Contains all microservice configurations to be loaded into ZooKeeper
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zookeeper-service-configs
+  namespace: mysillydreams-dev
+data:
+  auth-service-config.properties: |
+    # Database Configuration
+    spring.datasource.url=jdbc:postgresql://postgres-auth.mysillydreams-dev:5432/authdb
+    spring.datasource.username=authuser
+    spring.datasource.password=authpass123
+    spring.datasource.driver-class-name=org.postgresql.Driver
+    spring.datasource.hikari.maximum-pool-size=10
+    spring.datasource.hikari.minimum-idle=2
+    spring.datasource.hikari.connection-timeout=20000
+    spring.datasource.hikari.idle-timeout=300000
+    spring.datasource.hikari.max-lifetime=1200000
+
+    # JPA Configuration
+    spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
+    spring.jpa.hibernate.ddl-auto=update
+    spring.jpa.show-sql=false
+    spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+    spring.jpa.properties.hibernate.format_sql=true
+    spring.jpa.properties.hibernate.jdbc.time_zone=UTC
+
+    # Redis Configuration
+    spring.data.redis.host=redis.mysillydreams-dev
+    spring.data.redis.port=6379
+    spring.data.redis.database=0
+    spring.data.redis.timeout=2000ms
+
+    # Eureka Configuration
+    eureka.client.service-url.defaultZone=http://eureka-server.mysillydreams-dev:8761/eureka/
+    eureka.client.fetch-registry=true
+    eureka.client.register-with-eureka=true
+    eureka.instance.prefer-ip-address=true
+    eureka.instance.lease-renewal-interval-in-seconds=10
+    eureka.instance.lease-expiration-duration-in-seconds=30
+
+    # Keycloak Configuration
+    keycloak.auth-server-url=http://keycloak.mysillydreams-dev:8080
+    keycloak.realm=MySillyDreams-Realm
+    keycloak.admin-client.client-id=admin-cli
+    keycloak.admin-client.username=admin
+    keycloak.admin-client.password=admin123
+    keycloak.admin-client.client-secret=admin-secret
+
+    # JWT Configuration
+    jwt.secret=MySecretJWTKeyForProductionUse123456789!
+    jwt.expiration-ms=86400000
+    jwt.refresh-expiration-ms=604800000
+
+    # App Configuration
+    app.simple-encryption.secret-key=TestEncryptionKeyForProduction123456789!
+    app.mfa.issuer-name=MySillyDreamsPlatform
+    app.internal-api.secret-key=InternalAPISecretKey123456789!
+    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:8080
+
+    # Management Configuration
+    management.endpoints.web.exposure.include=health,info,metrics,prometheus
+    management.endpoint.health.show-details=always
+    management.endpoint.health.probes.enabled=true
+    management.health.livenessstate.enabled=true
+    management.health.readinessstate.enabled=true
+    management.security.enabled=false
+    management.zipkin.tracing.endpoint=http://zipkin.mysillydreams-dev:9411/api/v2/spans
+    management.tracing.sampling.probability=1.0
+
+    # Logging Configuration
+    logging.level.root=INFO
+    logging.level.com.mysillydreams.auth=DEBUG
+    logging.level.org.springframework.security=INFO
+    logging.level.org.springframework.web=INFO
+    logging.level.org.springframework.cloud.zookeeper=DEBUG
+    logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
+
+  api-gateway-config.properties: |
+    # Redis Configuration
+    spring.data.redis.host=redis.mysillydreams-dev
+    spring.data.redis.port=6379
+    spring.data.redis.database=2
+    spring.data.redis.timeout=2000ms
+
+    # Spring Cloud Gateway Routes
+    spring.cloud.gateway.routes[0].id=auth-service
+    spring.cloud.gateway.routes[0].uri=http://auth-service.mysillydreams-dev:8081
+    spring.cloud.gateway.routes[0].predicates[0]=Path=/auth/**
+    spring.cloud.gateway.routes[0].filters[0]=StripPrefix=1
+
+    spring.cloud.gateway.routes[1].id=user-service
+    spring.cloud.gateway.routes[1].uri=http://user-service.mysillydreams-dev:8082
+    spring.cloud.gateway.routes[1].predicates[0]=Path=/users/**
+    spring.cloud.gateway.routes[1].filters[0]=StripPrefix=1
+
+    # Eureka Configuration
+    eureka.client.service-url.defaultZone=http://eureka-server.mysillydreams-dev:8761/eureka/
+    eureka.client.fetch-registry=true
+    eureka.client.register-with-eureka=true
+    eureka.instance.prefer-ip-address=true
+    eureka.instance.lease-renewal-interval-in-seconds=10
+    eureka.instance.lease-expiration-duration-in-seconds=30
+
+    # JWT Configuration
+    jwt.secret=MySecretJWTKeyForProductionUse123456789!
+    jwt.expiration-ms=86400000
+
+    # CORS Configuration
+    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:8080
+
+    # Management Configuration
+    management.endpoints.web.exposure.include=health,info,metrics,prometheus,gateway
+    management.endpoint.health.show-details=always
+    management.endpoint.health.probes.enabled=true
+    management.health.livenessstate.enabled=true
+    management.health.readinessstate.enabled=true
+    management.security.enabled=false
+    management.zipkin.tracing.endpoint=http://zipkin.mysillydreams-dev:9411/api/v2/spans
+    management.tracing.sampling.probability=1.0
+
+    # Logging Configuration
+    logging.level.root=INFO
+    logging.level.com.mysillydreams.gateway=DEBUG
+    logging.level.org.springframework.cloud.gateway=DEBUG
+    logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
+
+  user-service-config.properties: |
+    # Database Configuration
+    spring.datasource.url=jdbc:postgresql://postgres-user.mysillydreams-dev:5432/userdb
+    spring.datasource.username=useruser
+    spring.datasource.password=userpass123
+    spring.datasource.driver-class-name=org.postgresql.Driver
+    spring.datasource.hikari.maximum-pool-size=10
+    spring.datasource.hikari.minimum-idle=2
+    spring.datasource.hikari.connection-timeout=20000
+    spring.datasource.hikari.idle-timeout=300000
+    spring.datasource.hikari.max-lifetime=1200000
+
+    # JPA Configuration
+    spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
+    spring.jpa.hibernate.ddl-auto=update
+    spring.jpa.show-sql=false
+    spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+    spring.jpa.properties.hibernate.format_sql=true
+    spring.jpa.properties.hibernate.jdbc.time_zone=UTC
+
+    # Redis Configuration
+    spring.data.redis.host=redis.mysillydreams-dev
+    spring.data.redis.port=6379
+    spring.data.redis.database=1
+    spring.data.redis.timeout=2000ms
+
+    # Eureka Configuration
+    eureka.client.service-url.defaultZone=http://eureka-server.mysillydreams-dev:8761/eureka/
+    eureka.client.fetch-registry=true
+    eureka.client.register-with-eureka=true
+    eureka.instance.prefer-ip-address=true
+    eureka.instance.lease-renewal-interval-in-seconds=10
+    eureka.instance.lease-expiration-duration-in-seconds=30
+
+    # Keycloak Configuration
+    keycloak.auth-server-url=http://keycloak.mysillydreams-dev:8080
+    keycloak.realm=MySillyDreams-Realm
+    keycloak.admin-client.client-id=admin-cli
+    keycloak.admin-client.username=admin
+    keycloak.admin-client.password=admin123
+    keycloak.admin-client.client-secret=admin-secret
+
+    # Vault Configuration
+    spring.cloud.vault.enabled=true
+    spring.cloud.vault.host=vault.mysillydreams-dev
+    spring.cloud.vault.port=8200
+    spring.cloud.vault.scheme=http
+    spring.cloud.vault.authentication=TOKEN
+    spring.cloud.vault.token=hvs.CAESIJ2P7AR2wJNymXIz-anbW-69xnWj0IZnvVSbCgF5Ar26Gh4KHGh2cy5ycVJzVGhOcWJHVnNkVzVoYm5jdGJuVnM
+
+    # JWT Configuration
+    jwt.secret=MySecretJWTKeyForProductionUse123456789!
+    jwt.expiration-ms=86400000
+    jwt.refresh-expiration-ms=604800000
+
+    # App Configuration
+    app.simple-encryption.secret-key=TestEncryptionKeyForProduction123456789!
+    app.mfa.issuer-name=MySillyDreamsPlatform
+    app.internal-api.secret-key=InternalAPISecretKey123456789!
+    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:8080
+
+    # Management Configuration
+    management.endpoints.web.exposure.include=health,info,metrics,prometheus
+    management.endpoint.health.show-details=always
+    management.endpoint.health.probes.enabled=true
+    management.health.livenessstate.enabled=true
+    management.health.readinessstate.enabled=true
+    management.security.enabled=false
+    management.zipkin.tracing.endpoint=http://zipkin.mysillydreams-dev:9411/api/v2/spans
+    management.tracing.sampling.probability=1.0
+
+    # Logging Configuration
+    logging.level.root=INFO
+    logging.level.com.mysillydreams.user=DEBUG
+    logging.level.org.springframework.security=INFO
+    logging.level.org.springframework.web=INFO
+    logging.level.org.springframework.cloud.zookeeper=DEBUG
+    logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
+
+  admin-server-config.properties: |
+    # Spring Boot Admin Server Configuration
+    spring.boot.admin.server.enabled=true
+    spring.boot.admin.server.ui.title=MySillyDreams Admin Server
+    spring.boot.admin.server.ui.brand=MySillyDreams Platform
+    spring.boot.admin.server.notify.mail.enabled=false
+    spring.boot.admin.server.monitor.status-interval=10000ms
+    spring.boot.admin.server.monitor.info-interval=1m
+    spring.boot.admin.server.monitor.default-timeout=10000ms
+    spring.boot.admin.server.monitor.default-retries=1
+    spring.boot.admin.server.metadata-keys-to-sanitize=.*password.*,.*secret.*,.*key.*,.*token.*,.*credentials.*,.*vcap_services.*
+
+    # Server Configuration
+    server.port=8083
+    server.servlet.context-path=/
+    server.compression.enabled=true
+    server.compression.mime-types=text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+    server.compression.min-response-size=1024
+
+    # Eureka Configuration
+    eureka.client.service-url.defaultZone=http://eureka-server.mysillydreams-dev:8761/eureka/
+    eureka.client.fetch-registry=true
+    eureka.client.register-with-eureka=true
+    eureka.instance.prefer-ip-address=true
+    eureka.instance.lease-renewal-interval-in-seconds=30
+    eureka.instance.lease-expiration-duration-in-seconds=90
+    eureka.instance.metadata-map.management.context-path=/actuator
+    eureka.instance.metadata-map.health.path=/actuator/health
+    eureka.instance.metadata-map.info.path=/actuator/info
+
+    # Management Configuration
+    management.endpoints.web.exposure.include=health,info,metrics,prometheus
+    management.endpoint.health.show-details=always
+    management.endpoint.health.probes.enabled=true
+    management.health.livenessstate.enabled=true
+    management.health.readinessstate.enabled=true
+    management.security.enabled=false
+    management.zipkin.tracing.endpoint=http://zipkin.mysillydreams-dev:9411/api/v2/spans
+    management.tracing.sampling.probability=1.0
+
+    # Security Configuration
+    spring.security.user.name=admin
+    spring.security.user.password=admin123
+    spring.security.user.roles=ADMIN
+
+    # Logging Configuration
+    logging.level.root=INFO
+    logging.level.com.mysillydreams.adminserver=DEBUG
+    logging.level.de.codecentric.boot.admin=INFO
+    logging.level.org.springframework.cloud.netflix.eureka=INFO
+    logging.level.org.springframework.web=INFO
+    logging.level.org.springframework.security=INFO
+    logging.level.org.springframework.cloud.zookeeper=DEBUG
+    logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{traceId:-},%X{spanId:-}] - %msg%n
+
+    # Application Info
+    info.app.name=Admin Server
+    info.app.description=Spring Boot Admin Server for MySillyDreams Platform
+    info.app.version=1.0.0
+    info.app.environment=dev
+    info.build.artifact=admin-server
+    info.build.name=MySillyDreams Admin Server
+    info.build.version=1.0.0

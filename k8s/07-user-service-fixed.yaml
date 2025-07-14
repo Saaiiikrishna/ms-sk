@@ -1,0 +1,113 @@
+# User Service Deployment - Fixed for ZooKeeper Configuration Management
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+  namespace: mysillydreams-dev
+data:
+  # Bootstrap configuration only - all other config comes from Zookeeper
+  SPRING_PROFILES_ACTIVE: "dev"
+  ENVIRONMENT: "dev"
+  ZOOKEEPER_CONNECT_STRING: "zookeeper.mysillydreams-dev:2181"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+    component: microservice
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        component: microservice
+    spec:
+      # Add init container to wait for ZooKeeper
+      initContainers:
+      - name: wait-for-zookeeper
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for ZooKeeper to be ready..."
+          until nc -z zookeeper.mysillydreams-dev 2181; do
+            echo "ZooKeeper not ready, waiting..."
+            sleep 5
+          done
+          echo "ZooKeeper is ready!"
+      containers:
+      - name: user-service
+        image: saaiiikrishna/user-service:config-v1.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8082
+          name: http
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms512m -Xmx1024m -XX:+UseG1GC -XX:+UseContainerSupport"
+        - name: ZOOKEEPER_CONNECT_STRING
+          value: "zookeeper.mysillydreams-dev:2181"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "dev"
+        - name: ENVIRONMENT
+          value: "dev"
+        - name: SERVER_PORT
+          value: "8082"
+        - name: ROOT_LOG_LEVEL
+          value: "INFO"
+        # Redis configuration
+        - name: SPRING_DATA_REDIS_HOST
+          value: "redis.mysillydreams-dev"
+        - name: SPRING_DATA_REDIS_PORT
+          value: "6379"
+        # Zipkin configuration
+        - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+          value: "http://zipkin.mysillydreams-dev:9411/api/v2/spans"
+        - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+          value: "1.0"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8082
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8082
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+spec:
+  ports:
+  - port: 8082
+    targetPort: 8082
+    name: http
+  selector:
+    app: user-service

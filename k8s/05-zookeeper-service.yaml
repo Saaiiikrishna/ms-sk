@@ -1,0 +1,117 @@
+# Zookeeper Service (Spring Boot Wrapper) Deployment
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper-service
+  namespace: mysillydreams-dev
+  labels:
+    app: zookeeper-service
+    component: configuration
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper-service
+  template:
+    metadata:
+      labels:
+        app: zookeeper-service
+        component: configuration
+    spec:
+      containers:
+      - name: zookeeper-service
+        image: saaiiikrishna/zookeeper-service:dev-v2.6
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8084
+          name: http
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "dev"
+        - name: SERVER_PORT
+          value: "8084"
+        - name: ZOOKEEPER_CONNECTION_STRING
+          value: "zookeeper.mysillydreams-dev:2181"
+        - name: ENVIRONMENT
+          value: "dev"
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx512m -XX:+UseG1GC -XX:+UseContainerSupport"
+        - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+          value: "http://zipkin.mysillydreams-dev:9411/api/v2/spans"
+        - name: ZIPKIN_ENDPOINT
+          value: "http://zipkin.mysillydreams-dev:9411/api/v2/spans"
+        - name: EUREKA_SERVER_URL
+          value: "http://eureka-server.mysillydreams-dev:8761/eureka/"
+        - name: ADMIN_USERNAME
+          value: "admin"
+        - name: ADMIN_PASSWORD
+          value: "admin123"
+        - name: LOG_LEVEL_ROOT
+          value: "INFO"
+        - name: LOG_LEVEL_APP
+          value: "INFO"
+        - name: CORS_ALLOWED_ORIGINS
+          value: "http://localhost:3000,http://localhost:3001,http://localhost:8080"
+        # Database credentials
+        - name: DB_AUTH_USERNAME
+          value: "authuser"
+        - name: DB_AUTH_PASSWORD
+          value: "authpass123"
+        - name: DB_USER_USERNAME
+          value: "useruser"
+        - name: DB_USER_PASSWORD
+          value: "userpass123"
+        # JWT and encryption secrets
+        - name: JWT_SECRET
+          value: "mySecretKey123456789012345678901234567890"
+        - name: APP_ENCRYPTION_KEY
+          value: "TestEncryptionKeyForProduction123456789!"
+        - name: INTERNAL_API_KEY
+          value: "TestInternalApiKeyForProduction123456789!"
+        # Keycloak credentials
+        - name: KEYCLOAK_USERNAME
+          value: "admin"
+        - name: KEYCLOAK_PASSWORD
+          value: "admin123"
+        # Redis password (empty for dev)
+        - name: REDIS_PASSWORD
+          value: ""
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8084
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8084
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-service
+  namespace: mysillydreams-dev
+  labels:
+    app: zookeeper-service
+spec:
+  ports:
+  - port: 8084
+    targetPort: 8084
+    name: http
+  selector:
+    app: zookeeper-service

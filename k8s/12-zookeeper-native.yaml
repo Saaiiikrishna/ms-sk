@@ -1,0 +1,144 @@
+# Native Zookeeper Deployment (Core Configuration Service)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zookeeper-data-pvc
+  namespace: mysillydreams-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zookeeper-logs-pvc
+  namespace: mysillydreams-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+  namespace: mysillydreams-dev
+  labels:
+    app: zookeeper
+    component: configuration
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+        component: configuration
+    spec:
+      containers:
+      - name: zookeeper
+        image: confluentinc/cp-zookeeper:7.4.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 2181
+          name: client
+        - containerPort: 2888
+          name: follower
+        - containerPort: 3888
+          name: election
+        env:
+        - name: ZOOKEEPER_CLIENT_PORT
+          value: "2181"
+        - name: ZOOKEEPER_TICK_TIME
+          value: "2000"
+        - name: ZOOKEEPER_INIT_LIMIT
+          value: "5"
+        - name: ZOOKEEPER_SYNC_LIMIT
+          value: "2"
+        - name: ZOOKEEPER_SERVER_ID
+          value: "1"
+        - name: KAFKA_JMX_OPTS
+          value: "-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dzipkin.sender.type=http -Dzipkin.http.endpoint=http://zipkin:9411/api/v2/spans"
+        - name: ZOOKEEPER_JMX_OPTS
+          value: "-Dzookeeper.4lw.commands.whitelist=* -Dzipkin.sender.type=http -Dzipkin.http.endpoint=http://zipkin:9411/api/v2/spans"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 2181
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 2181
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - mountPath: /var/lib/zookeeper/data
+          name: zookeeper-data
+        - mountPath: /var/lib/zookeeper/log
+          name: zookeeper-logs
+      volumes:
+      - name: zookeeper-data
+        persistentVolumeClaim:
+          claimName: zookeeper-data-pvc
+      - name: zookeeper-logs
+        persistentVolumeClaim:
+          claimName: zookeeper-logs-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: mysillydreams-dev
+  labels:
+    app: zookeeper
+    component: configuration
+spec:
+  ports:
+  - port: 2181
+    targetPort: 2181
+    name: client
+  - port: 2888
+    targetPort: 2888
+    name: follower
+  - port: 3888
+    targetPort: 3888
+    name: election
+  selector:
+    app: zookeeper
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-nodeport
+  namespace: mysillydreams-dev
+  labels:
+    app: zookeeper
+    component: configuration
+spec:
+  type: NodePort
+  ports:
+  - port: 2181
+    targetPort: 2181
+    nodePort: 32181
+    name: client
+  selector:
+    app: zookeeper

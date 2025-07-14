@@ -1,0 +1,102 @@
+# Eureka Server Deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eureka-server-config
+  namespace: mysillydreams-dev
+data:
+  SPRING_PROFILES_ACTIVE: "kubernetes"
+  SPRING_APPLICATION_NAME: "eureka-server"
+  SERVER_PORT: "8761"
+  ENVIRONMENT: "dev"
+  SPRING_CONFIG_IMPORT: "optional:zookeeper:zookeeper.mysillydreams-dev:2181"
+  SPRING_CLOUD_ZOOKEEPER_CONNECT_STRING: "zookeeper.mysillydreams-dev:2181"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eureka-server
+  namespace: mysillydreams-dev
+  labels:
+    app: eureka-server
+    component: service-discovery
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eureka-server
+  template:
+    metadata:
+      labels:
+        app: eureka-server
+        component: service-discovery
+    spec:
+      containers:
+      - name: eureka-server
+        image: saaiiikrishna/eureka-server:dev-v1.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8761
+          name: http
+        envFrom:
+        - configMapRef:
+            name: eureka-server-config
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms256m -Xmx512m -XX:+UseG1GC -XX:+UseContainerSupport"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8761
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8761
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka-server
+  namespace: mysillydreams-dev
+  labels:
+    app: eureka-server
+spec:
+  ports:
+  - port: 8761
+    targetPort: 8761
+    name: http
+  selector:
+    app: eureka-server
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eureka-server-nodeport
+  namespace: mysillydreams-dev
+  labels:
+    app: eureka-server
+spec:
+  type: NodePort
+  ports:
+  - port: 8761
+    targetPort: 8761
+    nodePort: 30761
+    name: http
+  selector:
+    app: eureka-server

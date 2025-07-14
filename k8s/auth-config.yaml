@@ -1,0 +1,101 @@
+spring:
+  datasource:
+    url: ${AUTH_DB_URL_K8S:jdbc:postgresql://postgres-auth.mysillydreams-dev:5432/authdb}
+    username: ${AUTH_DB_USERNAME:authuser}
+    password: ${AUTH_DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+  redis:
+    host: redis.mysillydreams-dev
+    port: 6379
+    database: 0
+    timeout: 2000ms
+    password: ${REDIS_PASSWORD:}
+  cloud:
+    vault:
+      uri: ${VAULT_URI_K8S:http://vault.mysillydreams-dev:8200}
+      token: ${VAULT_TOKEN:}
+      enabled: true
+      authentication: TOKEN
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server.mysillydreams-dev:8761/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+keycloak:
+  auth-server-url: ${KEYCLOAK_AUTH_SERVER_URL_K8S:http://keycloak.mysillydreams-dev:8080}
+  realm: ${KEYCLOAK_REALM:MySillyDreams-Realm}
+  admin-client:
+    client-id: admin-cli
+    username: ${KEYCLOAK_ADMIN_USERNAME:admin}
+    password: ${KEYCLOAK_ADMIN_PASSWORD:}
+
+jwt:
+  secret: ${JWT_SECRET:}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+
+app:
+  simple-encryption:
+    secret-key: ${APP_ENCRYPTION_KEY:}
+  mfa:
+    issuer-name: ${MFA_ISSUER:MySillyDreamsPlatform}
+  internal-api:
+    secret-key: ${INTERNAL_API_KEY:}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:3001,http://localhost:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  security:
+    enabled: false
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT_K8S:http://zipkin.mysillydreams-dev:9411/api/v2/spans}
+
+logging:
+  level:
+    root: INFO
+    com.mysillydreams.auth: DEBUG
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+    org.springframework.cloud.zookeeper: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

@@ -1,0 +1,26 @@
+# Auth Service Bootstrap Configuration
+# PRODUCTION HARDENED - NO HARDCODED SECRETS OR CONFIGURATIONS
+# ALL configuration must be loaded from Zookeeper
+
+spring:
+  application:
+    name: auth-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  config:
+    import: "zookeeper:${ZOOKEEPER_CONNECT:zookeeper:2181}"
+  cloud:
+    zookeeper:
+      connect-string: ${ZOOKEEPER_CONNECT:zookeeper:2181}
+      config:
+        enabled: true
+        default-context: ${ZOOKEEPER_CONFIG_PATH:/config/local/auth-service}
+
+# MINIMAL server configuration - port only
+server:
+  port: ${SERVER_PORT:8081}
+
+# MINIMAL logging - everything else from Zookeeper
+logging:
+  level:
+    root: ${ROOT_LOG_LEVEL:INFO}

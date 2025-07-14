@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-loader-script
+  namespace: mysillydreams-dev
+data:
+  load-images.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Loading Docker images into Minikube..."
+    
+    # Load images from tar files
+    if [ -f /images/api-gateway.tar ]; then
+      echo "Loading api-gateway..."
+      docker load -i /images/api-gateway.tar
+    fi
+    
+    if [ -f /images/auth-service.tar ]; then
+      echo "Loading auth-service..."
+      docker load -i /images/auth-service.tar
+    fi
+    
+    if [ -f /images/user-service.tar ]; then
+      echo "Loading user-service..."
+      docker load -i /images/user-service.tar
+    fi
+    
+    if [ -f /images/eureka-server.tar ]; then
+      echo "Loading eureka-server..."
+      docker load -i /images/eureka-server.tar
+    fi
+    
+    if [ -f /images/admin-server.tar ]; then
+      echo "Loading admin-server..."
+      docker load -i /images/admin-server.tar
+    fi
+    
+    if [ -f /images/zookeeper-service.tar ]; then
+      echo "Loading zookeeper-service..."
+      docker load -i /images/zookeeper-service.tar
+    fi
+    
+    echo "All images loaded successfully!"
+    docker images | grep mysillydreams
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: image-loader
+  namespace: mysillydreams-dev
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: image-loader
+        image: docker:24-dind
+        command: ["/bin/sh"]
+        args: ["/scripts/load-images.sh"]
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        - name: image-files
+          mountPath: /images
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+      - name: image-files
+        hostPath:
+          path: /tmp/images
+      - name: scripts
+        configMap:
+          name: image-loader-script
+          defaultMode: 0755

@@ -1,0 +1,187 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper-local
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - microservices-network
+
+  # Custom Zookeeper Admin Service
+  zookeeper-admin:
+    build:
+      context: ./zookeeper-service
+      dockerfile: Dockerfile
+    container_name: zookeeper-admin-local
+    ports:
+      - "8084:8084"
+    environment:
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+      - SERVER_PORT=8084
+    depends_on:
+      - zookeeper
+    networks:
+      - microservices-network
+
+  # Zipkin for Distributed Tracing
+  zipkin:
+    image: openzipkin/zipkin:2.24
+    container_name: zipkin-local
+    ports:
+      - "9411:9411"
+    networks:
+      - microservices-network
+
+  # Redis for Caching
+  redis:
+    image: redis:7-alpine
+    container_name: redis-local
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - microservices-network
+
+  # PostgreSQL for Auth Service
+  postgres-auth:
+    image: postgres:15-alpine
+    container_name: postgres-auth-local
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: authdb
+      POSTGRES_USER: authuser
+      POSTGRES_PASSWORD: authpass123
+    volumes:
+      - postgres_auth_data:/var/lib/postgresql/data
+      - ./scripts/init-auth-db.sql:/docker-entrypoint-initdb.d/init-auth-db.sql
+    networks:
+      - microservices-network
+
+  # PostgreSQL for User Service
+  postgres-user:
+    image: postgres:15-alpine
+    container_name: postgres-user-local
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: userdb
+      POSTGRES_USER: useruser
+      POSTGRES_PASSWORD: userpass123
+    volumes:
+      - postgres_user_data:/var/lib/postgresql/data
+      - ./scripts/init-user-db.sql:/docker-entrypoint-initdb.d/init-user-db.sql
+    networks:
+      - microservices-network
+
+  # Eureka Server for Service Discovery
+  eureka-server:
+    build:
+      context: ./eureka-server
+      dockerfile: Dockerfile
+    container_name: eureka-server-local
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+      - ZOOKEEPER_CONFIG_PATH=/config/local/eureka-server
+      - SERVER_PORT=8761
+      - ROOT_LOG_LEVEL=INFO
+    depends_on:
+      - zookeeper
+    networks:
+      - microservices-network
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service-local
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+      - ZOOKEEPER_CONFIG_PATH=/config/local/auth-service
+      - SERVER_PORT=8081
+      - ROOT_LOG_LEVEL=INFO
+    depends_on:
+      - zookeeper
+      - postgres-auth
+      - redis
+      - eureka-server
+      - zipkin
+    networks:
+      - microservices-network
+
+  # User Service
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    container_name: user-service-local
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+      - ZOOKEEPER_CONFIG_PATH=/config/local/user-service
+      - SERVER_PORT=8082
+      - ROOT_LOG_LEVEL=INFO
+    depends_on:
+      - zookeeper
+      - postgres-user
+      - redis
+      - eureka-server
+      - zipkin
+      - auth-service
+    networks:
+      - microservices-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway-local
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+      - ZOOKEEPER_CONFIG_PATH=/config/local/api-gateway
+      - SERVER_PORT=8080
+      - ROOT_LOG_LEVEL=INFO
+    depends_on:
+      - zookeeper
+      - eureka-server
+      - zipkin
+      - auth-service
+      - user-service
+    networks:
+      - microservices-network
+
+volumes:
+  zookeeper_data:
+  zookeeper_logs:
+  redis_data:
+  postgres_auth_data:
+  postgres_user_data:
+
+networks:
+  microservices-network:
+    driver: bridge
