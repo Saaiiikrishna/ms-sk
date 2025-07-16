@@ -21,11 +21,21 @@ data:
 
     # JPA Configuration
     spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
-    spring.jpa.hibernate.ddl-auto=update
+    spring.jpa.hibernate.ddl-auto=validate
     spring.jpa.show-sql=false
     spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
     spring.jpa.properties.hibernate.format_sql=true
     spring.jpa.properties.hibernate.jdbc.time_zone=UTC
+
+    # Flyway Configuration - Fixed for clean deployment
+    spring.flyway.enabled=true
+    spring.flyway.locations=classpath:db/migration
+    spring.flyway.baseline-on-migrate=true
+    spring.flyway.baseline-version=1
+    spring.flyway.baseline-description=Initial baseline
+    spring.flyway.validate-on-migrate=false
+    spring.flyway.clean-disabled=false
+    spring.flyway.out-of-order=true
 
     # Redis Configuration
     spring.data.redis.host=redis.mysillydreams-dev
@@ -58,7 +68,7 @@ data:
     app.simple-encryption.secret-key=TestEncryptionKeyForProduction123456789!
     app.mfa.issuer-name=MySillyDreamsPlatform
     app.internal-api.secret-key=InternalAPISecretKey123456789!
-    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:8080
+    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:8080
 
     # Management Configuration
     management.endpoints.web.exposure.include=health,info,metrics,prometheus
@@ -109,7 +119,10 @@ data:
     jwt.expiration-ms=86400000
 
     # CORS Configuration
-    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:8080
+    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:8080
+
+    # Security Configuration
+    spring.security.csrf.enabled=false
 
     # Management Configuration
     management.endpoints.web.exposure.include=health,info,metrics,prometheus,gateway
@@ -186,7 +199,7 @@ data:
     app.simple-encryption.secret-key=TestEncryptionKeyForProduction123456789!
     app.mfa.issuer-name=MySillyDreamsPlatform
     app.internal-api.secret-key=InternalAPISecretKey123456789!
-    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:8080
+    app.cors.allowed-origins=http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:8080
 
     # Management Configuration
     management.endpoints.web.exposure.include=health,info,metrics,prometheus

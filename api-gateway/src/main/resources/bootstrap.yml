@@ -8,13 +8,19 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
   config:
-    import: "zookeeper:${ZOOKEEPER_CONNECT:zookeeper:2181}"
+    import: "zookeeper:${ZOOKEEPER_CONNECT_STRING:zookeeper.mysillydreams-dev:2181}"
   cloud:
     zookeeper:
-      connect-string: ${ZOOKEEPER_CONNECT:zookeeper:2181}
+      connect-string: ${ZOOKEEPER_CONNECT_STRING:zookeeper.mysillydreams-dev:2181}
       config:
         enabled: true
-        default-context: ${ZOOKEEPER_CONFIG_PATH:/config/local/api-gateway}
+        root: /config
+        default-context: api-gateway
+        profile-separator: ','
+        fail-fast: true
+      discovery:
+        enabled: false
+        register: false
 
 # MINIMAL server configuration - port only
 server:

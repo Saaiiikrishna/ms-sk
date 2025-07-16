@@ -9,6 +9,8 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
@@ -34,6 +36,13 @@ public class SecurityConfig {
 
 
     /**
+     * Password encoder for hashing admin passwords.
+     */
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder(12); // Strong hashing with 12 rounds
+    }
+    /**
      * Configures HTTP security rules using SecurityFilterChain (Spring Security 6.x style).
      */
     @Bean
@@ -55,6 +64,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/auth/validate").permitAll()
                 // Permit internal API endpoints (they have their own API key authentication)
                 .requestMatchers("/internal/auth/**").permitAll()
+                // Permit Keycloak integration endpoints for admin authentication
+                .requestMatchers("/keycloak/**").permitAll()
                 // Secure password rotation endpoint - will be further secured by @PreAuthorize
                 .requestMatchers(HttpMethod.POST, "/auth/password-rotate").authenticated()
                 // All other requests must be authenticated

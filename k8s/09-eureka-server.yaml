@@ -34,8 +34,8 @@ spec:
     spec:
       containers:
       - name: eureka-server
-        image: saaiiikrishna/eureka-server:dev-v1.0
-        imagePullPolicy: Always
+        image: saaiiikrishna/eureka-server:msd-dev-v1.0
+        imagePullPolicy: Never
         ports:
         - containerPort: 8761
           name: http

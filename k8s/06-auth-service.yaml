@@ -30,11 +30,12 @@ spec:
     spec:
       containers:
       - name: auth-service
-        image: saaiiikrishna/auth-service:dev-v1.9
-        imagePullPolicy: Always
+        image: auth-service:1.8
+        imagePullPolicy: Never
         ports:
         - containerPort: 8081
           name: http
+
         envFrom:
         - configMapRef:
             name: auth-service-config
@@ -56,15 +57,15 @@ spec:
         livenessProbe:
           httpGet:
             path: /actuator/health
-            port: 8081
+            port: 8080
           initialDelaySeconds: 90
           periodSeconds: 30
           timeoutSeconds: 10
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /actuator/health/readiness
-            port: 8081
+            path: /actuator/health
+            port: 8080
           initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 5
@@ -80,7 +81,7 @@ metadata:
 spec:
   ports:
   - port: 8081
-    targetPort: 8081
+    targetPort: 8080
     name: http
   selector:
     app: auth-service

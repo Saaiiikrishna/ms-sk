@@ -390,10 +390,74 @@ kubectl exec -n mysillydreams-dev auth-service-pod -- \
 3. **Access control**: Restrict ZooKeeper access to authorized services
 4. **Backup encryption**: Encrypt configuration backups
 
+## User Service Deployment Issues and Solutions
+
+### Issue 10: User Service Bootstrap Configuration Mismatch
+
+**Problem**: User service was failing to load configuration from ZooKeeper
+**Root Cause**: Bootstrap.yml had incorrect ZooKeeper path configuration
+```yaml
+# WRONG - in bootstrap.yml
+default-context: local/user-service  # This creates path /config/local/user-service
+
+# But ZooKeeper configs were stored at:
+/config/user-service  # Without the "local/" prefix
+```
+
+**Solution**: Fixed bootstrap.yml to use correct path:
+```yaml
+# CORRECT - in bootstrap.yml
+spring:
+  cloud:
+    zookeeper:
+      config:
+        default-context: user-service  # Matches ZooKeeper path /config/user-service
+```
+
+### Issue 11: Missing Vault Integration in User Service Deployment
+
+**Problem**: User service requires Vault for production but deployment YAML didn't enable it
+**Root Cause**: Environment variables for Vault were missing in deployment configuration
+
+**Solution**: Added comprehensive Vault environment variables to deployment:
+```yaml
+# Vault Configuration (Enable Vault Integration)
+- name: SPRING_CLOUD_VAULT_ENABLED
+  value: "true"
+- name: SPRING_CLOUD_VAULT_HOST
+  value: "vault.mysillydreams-dev"
+- name: SPRING_CLOUD_VAULT_PORT
+  value: "8200"
+- name: SPRING_CLOUD_VAULT_SCHEME
+  value: "http"
+- name: SPRING_CLOUD_VAULT_AUTHENTICATION
+  value: "TOKEN"
+- name: SPRING_CLOUD_VAULT_TOKEN
+  value: "hvs.CAESIJ2P7AR2wJNymXIz-anbW-69xnWj0IZnvVSbCgF5Ar26Gh4KHGh2cy5ycVJzVGhOcWJHVnNkVzVoYm5jdGJuVnM"
+```
+
+### Issue 12: Incomplete Production Hardening for User Service
+
+**Problem**: User service deployment lacked production-ready features
+**Root Cause**: Missing init containers, proper health checks, and resource management
+
+**Solution**: Created comprehensive production deployment with:
+1. **Init Containers**: Wait for ZooKeeper, Vault, PostgreSQL, and Redis
+2. **Enhanced Health Checks**: Liveness, readiness, and startup probes
+3. **Resource Management**: Proper CPU and memory limits
+4. **Production JVM Settings**: Optimized for container environments
+
+### User Service Production Deployment Files Created
+
+1. **k8s/07-user-service-production.yaml**: Complete production deployment
+2. **k8s/deploy-user-service-production.sh**: Automated deployment script
+3. **k8s/verify-user-service.sh**: Comprehensive verification script
+4. **build-user-service.sh**: Docker image build script
+
 ## Next Steps
 
 ### Immediate
-1. Apply same configuration management to other microservices (API Gateway, User Service)
+1. ✅ **COMPLETED**: Apply same configuration management to User Service
 2. Implement configuration encryption for sensitive data
 3. Add monitoring and alerting for configuration loading
 
@@ -405,6 +469,6 @@ kubectl exec -n mysillydreams-dev auth-service-pod -- \
 
 ---
 
-**Status**: ✅ **PRODUCTION READY**
-**Last Updated**: 2025-07-13
+**Status**: ✅ **PRODUCTION READY** (Auth Service, API Gateway, User Service)
+**Last Updated**: 2025-07-15
 **Author**: MySillyDreams Platform Team

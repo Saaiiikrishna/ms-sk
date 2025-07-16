@@ -10,6 +10,8 @@ data:
   SPRING_PROFILES_ACTIVE: "dev"
   ENVIRONMENT: "dev"
   ZOOKEEPER_CONNECT_STRING: "zookeeper.mysillydreams-dev:2181"
+  # CORS Configuration
+  CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:8080"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -45,7 +47,8 @@ spec:
           echo "ZooKeeper is ready!"
       containers:
       - name: api-gateway
-        image: saaiiikrishna/api-gateway:config-v1.0
+        image: api-gateway:1.4
+        imagePullPolicy: Never
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
@@ -73,6 +76,12 @@ spec:
           value: "http://zipkin.mysillydreams-dev:9411/api/v2/spans"
         - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
           value: "1.0"
+        # CORS configuration
+        - name: CORS_ALLOWED_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: api-gateway-config
+              key: CORS_ALLOWED_ORIGINS
         resources:
           requests:
             memory: "512Mi"

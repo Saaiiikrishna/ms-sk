@@ -98,9 +98,17 @@ create_config "/config/local/user-service/server.port" "8082"
 create_config "/config/local/user-service/spring.application.name" "user-service"
 
 # Database
-create_config "/config/local/user-service/spring.datasource.url" "jdbc:postgresql://postgres-user:5432/userdb"
-create_config "/config/local/user-service/spring.datasource.username" "useruser"
-create_config "/config/local/user-service/spring.datasource.password" "userpass123"
+create_config "/config/local/user-service/spring.datasource.url" "jdbc:postgresql://postgres:5432/mysillydreams_dev"
+create_config "/config/local/user-service/spring.datasource.username" "postgres"
+create_config "/config/local/user-service/spring.datasource.password" "password"
+create_config "/config/local/user-service/spring.datasource.driver-class-name" "org.postgresql.Driver"
+
+# JPA/Hibernate Configuration
+create_config "/config/local/user-service/spring.jpa.database-platform" "org.hibernate.dialect.PostgreSQLDialect"
+create_config "/config/local/user-service/spring.jpa.hibernate.ddl-auto" "update"
+create_config "/config/local/user-service/spring.jpa.show-sql" "false"
+create_config "/config/local/user-service/spring.jpa.properties.hibernate.format_sql" "true"
+create_config "/config/local/user-service/spring.jpa.properties.hibernate.dialect" "org.hibernate.dialect.PostgreSQLDialect"
 
 # Auth Service Integration
 create_config "/config/local/user-service/auth.service.url" "http://auth-service:8081"

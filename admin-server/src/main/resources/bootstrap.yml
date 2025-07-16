@@ -4,35 +4,52 @@
 spring:
   application:
     name: admin-server
-  config:
-    import: "optional:zookeeper:${ZOOKEEPER_CONNECT_STRING:zookeeper:2181}"
   cloud:
+    # Disable Eureka when using ZooKeeper for service discovery
+    service-registry:
+      auto-registration:
+        enabled: false
+    # ZooKeeper Configuration
     zookeeper:
-      connect-string: ${ZOOKEEPER_CONNECT_STRING:zookeeper:2181}
+      connect-string: zookeeper.mysillydreams-dev:2181
       config:
         enabled: true
-        root: /mysillydreams
-        default-context: ${ENVIRONMENT:dev}/admin-server
+        root: /config
+        default-context: admin-server
         profile-separator: ','
+        fail-fast: true
+      discovery:
+        enabled: false
+        register: false
   profiles:
-    active: ${ENVIRONMENT:dev}
+    active: ${SPRING_PROFILES_ACTIVE:dev}
 
-# Basic server configuration (minimal required)
+# MINIMAL server configuration - port only
 server:
-  port: 8083
+  port: ${SERVER_PORT:8083}
 
-# Basic management endpoints (will be overridden by Zookeeper)
+# MINIMAL logging - everything else from ZooKeeper
+logging:
+  level:
+    root: ${ROOT_LOG_LEVEL:INFO}
+    # Spring Cloud Bootstrap debugging
+    org.springframework.cloud.bootstrap: DEBUG
+    org.springframework.cloud.context: DEBUG
+    org.springframework.cloud.config: DEBUG
+    # ZooKeeper specific debugging
+    org.springframework.cloud.zookeeper: DEBUG
+    org.apache.curator: DEBUG
+    org.apache.zookeeper: DEBUG
+
+# Enable debug mode for detailed startup information
+debug: true
+
+# Management endpoints for debugging
 management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: "health,info,env,configprops,beans"
   endpoint:
     health:
       show-details: always
-  tracing:
-    sampling:
-      probability: 1.0
-  zipkin:
-    tracing:
-      endpoint: http://zipkin:9411/api/v2/spans

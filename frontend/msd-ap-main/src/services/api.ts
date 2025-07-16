@@ -5,32 +5,32 @@
 
 // API Configuration
 export const API_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080',
+  BASE_URL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'http://localhost:8080'),
   ENDPOINTS: {
     // Authentication endpoints
     AUTH: {
-      LOGIN: '/api/auth/login',
-      REFRESH: '/api/auth/refresh',
-      VALIDATE: '/api/auth/validate',
-      PASSWORD_ROTATE: '/api/auth/password-rotate'
+      LOGIN: '/auth/login',
+      REFRESH: '/auth/refresh',
+      VALIDATE: '/auth/validate',
+      PASSWORD_ROTATE: '/auth/password-rotate'
     },
     // Admin management endpoints
     ADMIN: {
-      MFA_SETUP: '/api/auth/admin/mfa/setup',
-      MFA_VERIFY: '/api/auth/admin/mfa/verify',
-      CREATE_STEP1: '/api/auth/admin/admins/create/step1',
-      CREATE_STEP2: '/api/auth/admin/admins/create/step2',
-      CREATE_STEP3: '/api/auth/admin/admins/create/step3'
+      MFA_SETUP: '/auth/admin/mfa/setup',
+      MFA_VERIFY: '/auth/admin/mfa/verify',
+      CREATE_STEP1: '/auth/admin/admins/create/step1',
+      CREATE_STEP2: '/auth/admin/admins/create/step2',
+      CREATE_STEP3: '/auth/admin/admins/create/step3'
     },
     // User management endpoints
     USERS: {
-      BASE: '/api/users',
-      BY_ID: (id: string) => `/api/users/${id}`,
-      CREATE: '/api/users',
-      UPDATE: (id: string) => `/api/users/${id}`,
-      DELETE: (id: string) => `/api/users/${id}`
+      BASE: '/users',
+      BY_ID: (id: string) => `/users/${id}`,
+      CREATE: '/users',
+      UPDATE: (id: string) => `/users/${id}`,
+      DELETE: (id: string) => `/users/${id}`
     },
-    // Configuration endpoints
+    // Configuration endpoints (routed to zookeeper-service)
     CONFIG: {
       BASE: '/api/config',
       BY_ENV_SERVICE: (env: string, service: string) => `/api/config/${env}/${service}`,
@@ -264,5 +264,5 @@ export class ApiClient {
   }
 }
 
-// Create singleton instance
-export const apiClient = new ApiClient();
+// Create singleton instance with development-friendly base URL
+export const apiClient = new ApiClient(import.meta.env.DEV ? '' : 'http://localhost:8080');

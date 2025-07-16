@@ -201,28 +201,3 @@ class SupportMessageServiceTest {
         });
     }
 }
-
-    @Mock private SupportMessageRepository mockMessageRepository;
-    @Mock private SupportTicketRepository mockTicketRepository;
-    @Mock private SupportKafkaClient mockSupportKafkaClient;
-    @Mock private ObjectMapper mockObjectMapper; // Mock ObjectMapper
-
-    @InjectMocks
-    private SupportMessageService supportMessageService;
-    // SupportMessageService constructor takes ObjectMapper, so @InjectMocks will use mockObjectMapper.
-
-    // ... rest of the test ...
-
-    @Test
-    void postMessageToTicket_attachmentSerializationFails_throwsRuntimeException() throws JsonProcessingException {
-        messageRequest.setAttachments(List.of(Map.of("file", "test.txt")));
-        when(mockTicketRepository.findById(testTicketId)).thenReturn(Optional.of(sampleTicket));
-        when(mockObjectMapper.writeValueAsString(messageRequest.getAttachments()))
-            .thenThrow(new JsonProcessingException("Serialization fail"){});
-
-        RuntimeException ex = assertThrows(RuntimeException.class, () -> {
-            supportMessageService.postMessageToTicket(testTicketId, SenderType.CUSTOMER, testSenderId, messageRequest);
-        });
-        assertTrue(ex.getMessage().contains("Failed to process message attachments."));
-    }
-}

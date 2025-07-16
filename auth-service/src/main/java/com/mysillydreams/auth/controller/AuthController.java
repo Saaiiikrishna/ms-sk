@@ -4,6 +4,7 @@ import com.mysillydreams.auth.controller.dto.JwtResponse;
 import com.mysillydreams.auth.controller.dto.LoginRequest;
 import com.mysillydreams.auth.controller.dto.TokenRefreshRequest;
 import com.mysillydreams.auth.service.AuthService; // Added
+import com.mysillydreams.auth.service.HybridAuthenticationService;
 import com.mysillydreams.auth.service.PasswordRotationService;
 import com.mysillydreams.auth.util.JwtTokenProvider;
 
@@ -47,14 +48,17 @@ public class AuthController {
     private final JwtTokenProvider jwtTokenProvider; // Still needed for /refresh and /validate
     private final PasswordRotationService passwordRotationService;
     private final AuthService authService; // Added AuthService
+    private final HybridAuthenticationService hybridAuthenticationService; // Added Hybrid Authentication
 
     @Autowired
     public AuthController(AuthService authService, // Injected AuthService
                           JwtTokenProvider jwtTokenProvider,
-                          PasswordRotationService passwordRotationService) {
+                          PasswordRotationService passwordRotationService,
+                          HybridAuthenticationService hybridAuthenticationService) {
         this.authService = authService;
         this.jwtTokenProvider = jwtTokenProvider;
         this.passwordRotationService = passwordRotationService;
+        this.hybridAuthenticationService = hybridAuthenticationService;
     }
 
     @Operation(summary = "User Login", description = "Authenticates a user with username and password against Keycloak and returns a service-specific JWT. For admins with MFA enabled, an OTP must also be provided.")

@@ -7,26 +7,52 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
+  console.log('LoginPage component rendered');
   const [email, setEmail] = useState('admin@mysillydreams.com');
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState('admin123');
   const [otpCode, setOtpCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showMFA, setShowMFA] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Test API connection directly
+  const testApiConnection = async () => {
+    console.log('Testing API connection...');
+    try {
+      const response = await fetch('/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: email,
+          password: password
+        })
+      });
+      console.log('API Response:', response);
+      const data = await response.text();
+      console.log('API Data:', data);
+    } catch (error) {
+      console.error('API Error:', error);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Login form submitted', { email, password: '***' });
     setIsLoading(true);
     setError(null);
 
     try {
       if (!showMFA) {
         // Initial login with email/password
+        console.log('Making login request...');
         const response = await authService.login({
           username: email,
           password: password
         });
+        console.log('Login response:', response);
 
         if (response.success && response.data) {
           // Check if user has MFA enabled
@@ -72,7 +98,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           <p className="text-gray-600">Admin Panel</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={(e) => { console.log('Form submitted!'); handleSubmit(e); }} className="space-y-6">
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center space-x-3">
               <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
@@ -143,10 +169,61 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           <button
             type="submit"
             disabled={isLoading}
+            onClick={() => console.log('Button clicked!')}
             className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? 'Signing In...' : showMFA ? 'Verify & Sign In' : 'Sign In'}
           </button>
+
+          <button
+            type="button"
+            onClick={testApiConnection}
+            className="w-full bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 text-sm"
+          >
+            Test API Connection
+          </button>
+
+          <div className="mt-4 p-4 bg-gray-100 rounded-lg">
+            <p className="text-sm text-gray-600 mb-2">Direct API Test:</p>
+            <button
+              onClick={() => {
+                console.log('Direct test button clicked!');
+                fetch('/auth/login', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ username: 'admin@mysillydreams.com', password: 'admin123' })
+                })
+                .then(response => {
+                  console.log('Response status:', response.status);
+                  return response.text();
+                })
+                .then(data => console.log('Response data:', data))
+                .catch(error => console.error('Error:', error));
+              }}
+              className="bg-blue-500 text-white px-4 py-2 rounded text-sm"
+            >
+              Direct API Test
+            </button>
+            <button
+              onClick={() => {
+                console.log('Testing auth service directly...');
+                fetch('http://localhost:8081/login', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ username: 'admin@mysillydreams.com', password: 'admin123' })
+                })
+                .then(response => {
+                  console.log('Direct auth service response status:', response.status);
+                  return response.text();
+                })
+                .then(data => console.log('Direct auth service response data:', data))
+                .catch(error => console.error('Direct auth service error:', error));
+              }}
+              className="bg-purple-500 text-white px-4 py-2 rounded text-sm ml-2"
+            >
+              Test Auth Service Direct
+            </button>
+          </div>
 
           {showMFA && (
             <button

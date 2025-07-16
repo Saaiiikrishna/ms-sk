@@ -1,21 +1,4 @@
-# Multi-stage build for API Gateway
-FROM maven:3.9.6-eclipse-temurin-17 as builder
-
-# Set working directory
-WORKDIR /app
-
-# Copy pom.xml first for better caching
-COPY pom.xml .
-
-# Download dependencies
-RUN mvn dependency:go-offline -B
-
-# Copy source code
-COPY src src
-
-# Build the application
-RUN mvn clean package -DskipTests -B
-
+# Runtime image using pre-built JAR
 # Production stage
 FROM eclipse-temurin:17-jre
 
@@ -28,8 +11,8 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Set working directory
 WORKDIR /app
 
-# Copy jar from builder stage
-COPY --from=builder /app/target/*.jar app.jar
+# Copy pre-built jar
+COPY target/*.jar app.jar
 
 # Change ownership to app user
 RUN chown -R appuser:appuser /app

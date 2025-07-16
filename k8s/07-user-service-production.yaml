@@ -1,0 +1,220 @@
+# User Service Production Deployment - ZooKeeper + Vault Configuration Management
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+  namespace: mysillydreams-dev
+data:
+  # Bootstrap configuration only - all other config comes from ZooKeeper
+  SPRING_PROFILES_ACTIVE: "dev"
+  ENVIRONMENT: "dev"
+  ZOOKEEPER_CONNECT_STRING: "zookeeper.mysillydreams-dev:2181"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+    component: microservice
+    version: v1.0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        component: microservice
+        version: v1.0
+    spec:
+      # Add init containers to wait for dependencies
+      initContainers:
+      - name: wait-for-zookeeper
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for ZooKeeper to be ready..."
+          until nc -z zookeeper.mysillydreams-dev 2181; do
+            echo "ZooKeeper not ready, waiting..."
+            sleep 5
+          done
+          echo "ZooKeeper is ready!"
+      - name: wait-for-vault
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for Vault to be ready..."
+          until nc -z vault.mysillydreams-dev 8200; do
+            echo "Vault not ready, waiting..."
+            sleep 5
+          done
+          echo "Vault is ready!"
+      - name: wait-for-postgres
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for PostgreSQL to be ready..."
+          until nc -z postgres-user.mysillydreams-dev 5432; do
+            echo "PostgreSQL not ready, waiting..."
+            sleep 5
+          done
+          echo "PostgreSQL is ready!"
+      - name: wait-for-redis
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for Redis to be ready..."
+          until nc -z redis.mysillydreams-dev 6379; do
+            echo "Redis not ready, waiting..."
+            sleep 5
+          done
+          echo "Redis is ready!"
+      containers:
+      - name: user-service
+        image: saaiiikrishna/user-service:msd-dev-v1.1
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8082
+          name: http
+        env:
+        # JVM Configuration
+        - name: JAVA_OPTS
+          value: "-Xms512m -Xmx1024m -XX:+UseG1GC -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+        
+        # Basic Service Configuration
+        - name: SERVER_PORT
+          value: "8082"
+        - name: SPRING_PROFILES_ACTIVE
+          value: "dev"
+        - name: ENVIRONMENT
+          value: "dev"
+        
+        # ZooKeeper Configuration
+        - name: ZOOKEEPER_CONNECT_STRING
+          value: "zookeeper.mysillydreams-dev:2181"
+        
+        # Vault Configuration (Enable Vault Integration)
+        - name: SPRING_CLOUD_VAULT_ENABLED
+          value: "true"
+        - name: SPRING_CLOUD_VAULT_HOST
+          value: "vault.mysillydreams-dev"
+        - name: SPRING_CLOUD_VAULT_PORT
+          value: "8200"
+        - name: SPRING_CLOUD_VAULT_SCHEME
+          value: "http"
+        - name: SPRING_CLOUD_VAULT_AUTHENTICATION
+          value: "TOKEN"
+        - name: SPRING_CLOUD_VAULT_TOKEN
+          value: "hvs.CAESIJ2P7AR2wJNymXIz-anbW-69xnWj0IZnvVSbCgF5Ar26Gh4KHGh2cy5ycVJzVGhOcWJHVnNkVzVoYm5jdGJuVnM"
+        
+        # Logging Configuration
+        - name: ROOT_LOG_LEVEL
+          value: "INFO"
+        - name: LOGGING_LEVEL_COM_MYSILLYDREAMS_USER
+          value: "DEBUG"
+        - name: LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_CLOUD_ZOOKEEPER
+          value: "DEBUG"
+        
+        # Zipkin Configuration
+        - name: MANAGEMENT_ZIPKIN_TRACING_ENDPOINT
+          value: "http://zipkin.mysillydreams-dev:9411/api/v2/spans"
+        - name: MANAGEMENT_TRACING_SAMPLING_PROBABILITY
+          value: "1.0"
+        
+        # Health Check Configuration
+        - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
+          value: "health,info,metrics,prometheus"
+        - name: MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS
+          value: "always"
+        - name: MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED
+          value: "true"
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        
+        # Health Checks
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8082
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8082
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Startup Probe for slower startup
+        startupProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8082
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+    component: microservice
+spec:
+  ports:
+  - port: 8082
+    targetPort: 8082
+    name: http
+    protocol: TCP
+  selector:
+    app: user-service
+  type: ClusterIP
+
+---
+# NodePort service for external access (development only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service-nodeport
+  namespace: mysillydreams-dev
+  labels:
+    app: user-service
+    component: microservice
+spec:
+  ports:
+  - port: 8082
+    targetPort: 8082
+    nodePort: 30082
+    name: http
+    protocol: TCP
+  selector:
+    app: user-service
+  type: NodePort

@@ -1,13 +1,6 @@
 package com.mysillydreams.auth.service;
 
-import com.mysillydreams.auth.entity.AdminMfaConfig;
-import com.mysillydreams.auth.repository.AdminMfaConfigRepository;
-import org.keycloak.admin.client.Keycloak;
-import org.keycloak.admin.client.resource.RealmResource;
-import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.representations.idm.CredentialRepresentation;
-import org.keycloak.representations.idm.RoleRepresentation;
-import org.keycloak.representations.idm.UserRepresentation;
+import com.mysillydreams.auth.entity.Admin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,38 +8,25 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.springframework.http.ResponseEntity;
-import jakarta.ws.rs.core.Response;
-import java.util.Collections;
-import java.util.List;
 import java.util.UUID;
 
 /**
- * Service for bootstrapping the first admin user.
- * This should be used only once and then disabled.
+ * Service for bootstrapping the first admin user using hybrid approach.
+ * Stores admin data in Auth Service database and creates corresponding Keycloak user.
  */
 @Service
 public class AdminBootstrapService {
 
     private static final Logger logger = LoggerFactory.getLogger(AdminBootstrapService.class);
 
-    private final Keycloak keycloak;
-    private final AdminMfaService adminMfaService;
-    private final AdminMfaConfigRepository adminMfaConfigRepository;
-
-    @Value("${keycloak.realm}")
-    private String realm;
+    private final HybridAdminService hybridAdminService;
 
     @Value("${app.bootstrap.enabled:true}")
     private boolean bootstrapEnabled;
 
     @Autowired
-    public AdminBootstrapService(Keycloak keycloak, 
-                                AdminMfaService adminMfaService,
-                                AdminMfaConfigRepository adminMfaConfigRepository) {
-        this.keycloak = keycloak;
-        this.adminMfaService = adminMfaService;
-        this.adminMfaConfigRepository = adminMfaConfigRepository;
+    public AdminBootstrapService(HybridAdminService hybridAdminService) {
+        this.hybridAdminService = hybridAdminService;
     }
 
     /**
@@ -65,27 +45,29 @@ public class AdminBootstrapService {
         }
 
         try {
-            logger.info("Bootstrapping first admin user: {}", request.username);
+            logger.info("Bootstrapping first admin user using hybrid approach: {}", request.username);
 
-            // Create user in Keycloak
-            UUID userId = createUserInKeycloak(request);
-            
-            // Assign admin role
-            assignAdminRole(userId);
-            
-            // Generate MFA setup
-            AdminMfaService.MfaSetupResponse mfaSetup = adminMfaService.generateMfaSetup(userId, request.username);
-            
-            logger.info("First admin user bootstrapped successfully: {}", request.username);
-            
-            return new BootstrapResponse(
-                userId.toString(),
+            // Create admin using hybrid approach (internal DB + Keycloak)
+            Admin admin = hybridAdminService.createAdmin(
                 request.username,
-                mfaSetup.getRawSecret(),
-                mfaSetup.getQrCodeDataUri(),
-                "First admin user created successfully. Please scan the QR code and verify MFA to complete setup."
+                request.email,
+                request.firstName,
+                request.lastName,
+                request.password,
+                null // No creator for first admin
             );
-            
+
+            logger.info("First admin user bootstrapped successfully: {} with ID: {}",
+                       request.username, admin.getId());
+
+            return new BootstrapResponse(
+                admin.getId().toString(),
+                request.username,
+                null, // MFA will be set up through Keycloak later
+                null, // QR code will be generated through Keycloak later
+                "First admin user created successfully using hybrid approach. Admin data stored in Auth Service database, authentication handled by Keycloak."
+            );
+
         } catch (Exception e) {
             logger.error("Failed to bootstrap first admin user: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to bootstrap first admin user: " + e.getMessage(), e);
@@ -94,83 +76,31 @@ public class AdminBootstrapService {
 
     private boolean hasExistingAdmins() {
         try {
-            RealmResource realmResource = keycloak.realm(realm);
-            RoleRepresentation adminRole = realmResource.roles().get("admin").toRepresentation();
-            return !realmResource.roles().get("admin").getUserMembers().isEmpty();
+            // Check if any admins exist in internal database
+            return hybridAdminService.hasExistingAdmins();
         } catch (Exception e) {
             logger.warn("Could not check for existing admins: {}", e.getMessage());
             return false;
         }
     }
 
-    private UUID createUserInKeycloak(BootstrapRequest request) {
-        RealmResource realmResource = keycloak.realm(realm);
-        UsersResource usersResource = realmResource.users();
-
-        // Create user representation
-        UserRepresentation user = new UserRepresentation();
-        user.setUsername(request.username);
-        user.setEmail(request.email);
-        user.setFirstName(request.firstName);
-        user.setLastName(request.lastName);
-        user.setEnabled(true);
-        user.setEmailVerified(true);
-
-        // Set password
-        CredentialRepresentation credential = new CredentialRepresentation();
-        credential.setType(CredentialRepresentation.PASSWORD);
-        credential.setValue(request.password);
-        credential.setTemporary(false);
-        user.setCredentials(Collections.singletonList(credential));
-
-        // Create user
-        Response response = usersResource.create(user);
-        if (response.getStatus() != 201) {
-            throw new RuntimeException("Failed to create user in Keycloak. Status: " + response.getStatus());
-        }
-
-        // Extract user ID from location header
-        String location = response.getLocation().getPath();
-        String userId = location.substring(location.lastIndexOf('/') + 1);
-        
-        response.close();
-        return UUID.fromString(userId);
-    }
-
-    private void assignAdminRole(UUID userId) {
-        try {
-            RealmResource realmResource = keycloak.realm(realm);
-            RoleRepresentation adminRole = realmResource.roles().get("admin").toRepresentation();
-            realmResource.users().get(userId.toString()).roles().realmLevel().add(Collections.singletonList(adminRole));
-            logger.info("Admin role assigned to user: {}", userId);
-        } catch (Exception e) {
-            logger.error("Failed to assign admin role to user {}: {}", userId, e.getMessage(), e);
-            throw new RuntimeException("Failed to assign admin role", e);
-        }
+    /**
+     * Get admin by ID for verification purposes.
+     */
+    public Admin getAdminById(UUID adminId) {
+        return hybridAdminService.getAdminById(adminId)
+            .orElseThrow(() -> new IllegalArgumentException("Admin not found with ID: " + adminId));
     }
 
     /**
-     * Verify MFA for the bootstrapped admin and complete the setup.
+     * Get admin by username for authentication purposes.
      */
-    @Transactional
-    public boolean verifyBootstrapMfa(String userId, String totpCode) {
-        try {
-            UUID adminUserId = UUID.fromString(userId);
-            boolean verified = adminMfaService.verifyAndEnableMfa(adminUserId, totpCode);
-            
-            if (verified) {
-                logger.info("Bootstrap MFA verified successfully for user: {}", userId);
-                // TODO: Call user service to create admin profile
-                return true;
-            } else {
-                logger.warn("Bootstrap MFA verification failed for user: {}", userId);
-                return false;
-            }
-        } catch (Exception e) {
-            logger.error("Error verifying bootstrap MFA for user {}: {}", userId, e.getMessage(), e);
-            return false;
-        }
+    public Admin getAdminByUsername(String username) {
+        return hybridAdminService.getAdminByUsername(username)
+            .orElseThrow(() -> new IllegalArgumentException("Admin not found with username: " + username));
     }
+
+
 
     // DTOs
     public static class BootstrapRequest {
