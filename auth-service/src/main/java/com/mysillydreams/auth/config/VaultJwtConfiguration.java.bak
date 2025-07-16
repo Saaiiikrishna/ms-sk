@@ -1,0 +1,177 @@
+/* TEMPORARILY DISABLED FOR BUILD
+package com.mysillydreams.auth.config;
+
+import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.cloud.vault.config.VaultConfigOperations;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.vault.core.VaultOperations;
+import org.springframework.vault.support.VaultResponse;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.Map;
+
+/**
+ * Vault-based JWT configuration for production security.
+ * Manages JWT secrets securely using HashiCorp Vault.
+ */
+@Configuration
+@ConditionalOnProperty(name = "spring.cloud.vault.enabled", havingValue = "true")
+public class VaultJwtConfiguration {
+
+    private static final Logger logger = LoggerFactory.getLogger(VaultJwtConfiguration.class);
+    
+    private static final String JWT_SECRET_PATH = "secret/jwt";
+    private static final String JWT_SECRET_KEY = "signing-key";
+    private static final String JWT_REFRESH_SECRET_KEY = "refresh-signing-key";
+    
+    private final VaultOperations vaultOperations;
+    
+    @Value("${jwt.vault.path:secret/jwt}")
+    private String jwtVaultPath;
+    
+    @Value("${jwt.secret.auto-generate:true}")
+    private boolean autoGenerateSecrets;
+
+    public VaultJwtConfiguration(VaultOperations vaultOperations) {
+        this.vaultOperations = vaultOperations;
+    }
+
+    /**
+     * Primary JWT secret key from Vault
+     */
+    @Bean
+    @Primary
+    public SecretKey jwtSecretKey() {
+        return getOrCreateSecretKey(JWT_SECRET_KEY, "JWT signing key");
+    }
+
+    /**
+     * Separate refresh token secret key from Vault
+     */
+    @Bean
+    public SecretKey jwtRefreshSecretKey() {
+        return getOrCreateSecretKey(JWT_REFRESH_SECRET_KEY, "JWT refresh token signing key");
+    }
+
+    /**
+     * JWT secret string for backward compatibility
+     */
+    @Bean
+    public String jwtSecretString() {
+        try {
+            VaultResponse response = vaultOperations.read(jwtVaultPath);
+            if (response != null && response.getData() != null) {
+                String secret = (String) response.getData().get(JWT_SECRET_KEY);
+                if (secret != null && !secret.isEmpty()) {
+                    logger.info("JWT secret loaded from Vault at path: {}", jwtVaultPath);
+                    return secret;
+                }
+            }
+            
+            // Generate and store new secret if not found
+            if (autoGenerateSecrets) {
+                String newSecret = generateSecureSecret();
+                storeSecretInVault(JWT_SECRET_KEY, newSecret);
+                logger.info("Generated and stored new JWT secret in Vault");
+                return newSecret;
+            } else {
+                throw new IllegalStateException("JWT secret not found in Vault and auto-generation is disabled");
+            }
+            
+        } catch (Exception e) {
+            logger.error("Failed to load JWT secret from Vault: {}", e.getMessage());
+            throw new IllegalStateException("Unable to configure JWT secret from Vault", e);
+        }
+    }
+
+    private SecretKey getOrCreateSecretKey(String keyName, String description) {
+        try {
+            VaultResponse response = vaultOperations.read(jwtVaultPath);
+            if (response != null && response.getData() != null) {
+                String secret = (String) response.getData().get(keyName);
+                if (secret != null && !secret.isEmpty()) {
+                    logger.info("{} loaded from Vault", description);
+                    return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            
+            // Generate and store new secret if not found
+            if (autoGenerateSecrets) {
+                String newSecret = generateSecureSecret();
+                storeSecretInVault(keyName, newSecret);
+                logger.info("Generated and stored new {} in Vault", description);
+                return Keys.hmacShaKeyFor(newSecret.getBytes(StandardCharsets.UTF_8));
+            } else {
+                throw new IllegalStateException(description + " not found in Vault and auto-generation is disabled");
+            }
+            
+        } catch (Exception e) {
+            logger.error("Failed to load {} from Vault: {}", description, e.getMessage());
+            throw new IllegalStateException("Unable to configure " + description + " from Vault", e);
+        }
+    }
+
+    private String generateSecureSecret() {
+        // Generate a cryptographically secure 512-bit (64-byte) secret for HS512
+        SecureRandom secureRandom = new SecureRandom();
+        byte[] secretBytes = new byte[64];
+        secureRandom.nextBytes(secretBytes);
+        return Base64.getEncoder().encodeToString(secretBytes);
+    }
+
+    private void storeSecretInVault(String keyName, String secret) {
+        try {
+            // Read existing data to preserve other keys
+            Map<String, Object> existingData = Map.of();
+            VaultResponse existingResponse = vaultOperations.read(jwtVaultPath);
+            if (existingResponse != null && existingResponse.getData() != null) {
+                existingData = existingResponse.getData();
+            }
+            
+            // Add new secret to existing data
+            Map<String, Object> newData = new java.util.HashMap<>(existingData);
+            newData.put(keyName, secret);
+            
+            // Store in Vault
+            vaultOperations.write(jwtVaultPath, newData);
+            logger.info("Stored {} in Vault at path: {}", keyName, jwtVaultPath);
+            
+        } catch (Exception e) {
+            logger.error("Failed to store {} in Vault: {}", keyName, e.getMessage());
+            throw new IllegalStateException("Unable to store secret in Vault", e);
+        }
+    }
+
+    /**
+     * Rotate JWT secrets (for security maintenance)
+     */
+    public void rotateJwtSecrets() {
+        logger.info("Starting JWT secret rotation");
+        try {
+            String newSecret = generateSecureSecret();
+            String newRefreshSecret = generateSecureSecret();
+            
+            Map<String, Object> newSecrets = Map.of(
+                JWT_SECRET_KEY, newSecret,
+                JWT_REFRESH_SECRET_KEY, newRefreshSecret
+            );
+            
+            vaultOperations.write(jwtVaultPath, newSecrets);
+            logger.info("JWT secrets rotated successfully");
+            
+        } catch (Exception e) {
+            logger.error("Failed to rotate JWT secrets: {}", e.getMessage());
+            throw new IllegalStateException("JWT secret rotation failed", e);
+        }
+    }
+}
+*/

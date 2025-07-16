@@ -6,10 +6,13 @@ import lombok.NoArgsConstructor;
 
 @Data
 @NoArgsConstructor
-@Schema(description = "Response payload containing the JWT access token")
+@Schema(description = "Response payload containing the JWT access token and refresh token")
 public class JwtResponse {
     @Schema(description = "The JWT access token", example = "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0ZXN0dXNlci...")
     private String accessToken;
+
+    @Schema(description = "The refresh token for obtaining new access tokens", example = "abc123def456...")
+    private String refreshToken;
 
     @Schema(description = "Type of the token", example = "Bearer")
     private String tokenType = "Bearer";
@@ -24,5 +27,11 @@ public class JwtResponse {
 
     public JwtResponse(String accessToken) {
         this.accessToken = accessToken;
+    }
+
+    public JwtResponse(String accessToken, String refreshToken, Long expiresIn) {
+        this.accessToken = accessToken;
+        this.refreshToken = refreshToken;
+        this.expiresIn = expiresIn;
     }
 }

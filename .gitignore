@@ -65,6 +65,7 @@ application-*.log
 # IDE FILES
 # =============================================================================
 # IntelliJ IDEA
+.idea
 .idea/
 *.iws
 *.iml

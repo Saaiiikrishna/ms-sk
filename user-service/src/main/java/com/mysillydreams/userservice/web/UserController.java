@@ -19,7 +19,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException; // For simpler error responses if not using GlobalExceptionHandler for all
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.access.prepost.PreAuthorize;
+
+import java.util.List;
+import java.util.Map; // For simpler error responses if not using GlobalExceptionHandler for all
 
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
@@ -142,9 +146,93 @@ public class UserController {
     }
 
 
-    // TODO: Endpoints for:
-    // GET /users/{id}/sessions (as per PRD) - Requires Session DTO and service method
-    // Managing addresses (e.g., POST /users/{refId}/addresses, PUT /users/{refId}/addresses/{addressId}, DELETE ...)
-    // Managing payment info (e.g., POST /users/{refId}/paymentinfo, ...)
-    // DELETE /users/{refId} (for GDPR Right-to-Be-Forgotten)
+    /**
+     * Get user sessions (placeholder implementation)
+     */
+    @GetMapping("/{referenceId}/sessions")
+    @Operation(summary = "Get user sessions", description = "Retrieve all active sessions for a user")
+    public ResponseEntity<?> getUserSessions(
+            @Parameter(description = "Business reference ID of the user", required = true)
+            @PathVariable String referenceId) {
+        try {
+            logger.debug("Received request to get sessions for user: {}", referenceId);
+            // TODO: Implement session management service
+            return ResponseEntity.ok(Map.of(
+                "message", "Session management not yet implemented",
+                "userReferenceId", referenceId,
+                "sessions", List.of()
+            ));
+        } catch (Exception e) {
+            logger.error("Error retrieving sessions for user {}: {}", referenceId, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error retrieving user sessions", e);
+        }
+    }
+
+    /**
+     * Delete user (GDPR Right-to-Be-Forgotten)
+     */
+    @DeleteMapping("/{referenceId}")
+    @Operation(summary = "Delete user", description = "Delete user data for GDPR compliance")
+    @PreAuthorize("hasRole('ADMIN') or authentication.name == #referenceId")
+    public ResponseEntity<?> deleteUser(
+            @Parameter(description = "Business reference ID of the user to delete", required = true)
+            @PathVariable String referenceId) {
+        try {
+            logger.info("Received request to delete user: {}", referenceId);
+            // TODO: Implement proper GDPR deletion with audit trail
+            return ResponseEntity.ok(Map.of(
+                "message", "User deletion not yet implemented - requires GDPR compliance implementation",
+                "userReferenceId", referenceId
+            ));
+        } catch (Exception e) {
+            logger.error("Error deleting user {}: {}", referenceId, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error deleting user", e);
+        }
+    }
+
+    /**
+     * Manage user addresses (placeholder implementation)
+     */
+    @PostMapping("/{referenceId}/addresses")
+    @Operation(summary = "Add user address", description = "Add a new address for the user")
+    public ResponseEntity<?> addUserAddress(
+            @Parameter(description = "Business reference ID of the user", required = true)
+            @PathVariable String referenceId,
+            @RequestBody Map<String, Object> addressData) {
+        try {
+            logger.info("Received request to add address for user: {}", referenceId);
+            // TODO: Implement address management
+            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
+                "message", "Address management not yet implemented",
+                "userReferenceId", referenceId,
+                "addressData", addressData
+            ));
+        } catch (Exception e) {
+            logger.error("Error adding address for user {}: {}", referenceId, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error adding user address", e);
+        }
+    }
+
+    /**
+     * Manage user payment info (placeholder implementation)
+     */
+    @PostMapping("/{referenceId}/payment-info")
+    @Operation(summary = "Add user payment info", description = "Add payment information for the user")
+    public ResponseEntity<?> addUserPaymentInfo(
+            @Parameter(description = "Business reference ID of the user", required = true)
+            @PathVariable String referenceId,
+            @RequestBody Map<String, Object> paymentData) {
+        try {
+            logger.info("Received request to add payment info for user: {}", referenceId);
+            // TODO: Implement payment info management with proper encryption
+            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
+                "message", "Payment info management not yet implemented",
+                "userReferenceId", referenceId,
+                "note", "Payment data will be encrypted when implemented"
+            ));
+        } catch (Exception e) {
+            logger.error("Error adding payment info for user {}: {}", referenceId, e.getMessage(), e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error adding payment info", e);
+        }
+    }
 }

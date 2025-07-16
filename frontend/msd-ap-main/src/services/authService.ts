@@ -3,12 +3,13 @@
  * Handles all authentication-related API calls
  */
 
-import { 
-  apiClient, 
-  API_CONFIG, 
-  ApiResponse, 
-  LoginRequest, 
-  LoginResponse 
+import {
+  apiClient,
+  API_CONFIG,
+  ApiResponse,
+  LoginRequest,
+  LoginResponse,
+  JwtResponse
 } from './api';
 
 export interface MfaSetupResponse {
@@ -41,34 +42,94 @@ export class AuthService {
    * Login with email/password and optional MFA
    */
   async login(credentials: LoginRequest): Promise<ApiResponse<LoginResponse>> {
-    const response = await apiClient.post<LoginResponse>(
+    // Call backend which returns JwtResponse
+    const backendResponse = await apiClient.post<JwtResponse>(
       API_CONFIG.ENDPOINTS.AUTH.LOGIN,
       credentials
     );
 
-    // If login successful, store the token
-    if (response.success && response.data?.token) {
-      apiClient.setToken(response.data.token);
+    if (!backendResponse.success || !backendResponse.data) {
+      return {
+        success: false,
+        error: backendResponse.error || 'Login failed',
+        timestamp: backendResponse.timestamp
+      };
     }
 
-    return response;
+    // Convert JwtResponse to LoginResponse format
+    const jwtData = backendResponse.data;
+
+    // Store the token
+    apiClient.setToken(jwtData.accessToken);
+
+    // Get user info from token validation
+    const userInfo = await this.validateToken();
+
+    const loginResponse: LoginResponse = {
+      token: jwtData.accessToken,
+      refreshToken: jwtData.refreshToken,
+      expiresIn: jwtData.expiresIn,
+      user: userInfo.success && userInfo.data ? userInfo.data.user! : {
+        id: '',
+        username: credentials.username,
+        email: '',
+        roles: [],
+        mfaEnabled: false
+      }
+    };
+
+    return {
+      success: true,
+      data: loginResponse,
+      timestamp: backendResponse.timestamp
+    };
   }
 
   /**
    * Refresh authentication token
    */
   async refreshToken(refreshToken: string): Promise<ApiResponse<LoginResponse>> {
-    const response = await apiClient.post<LoginResponse>(
+    // Call backend which returns JwtResponse
+    const backendResponse = await apiClient.post<JwtResponse>(
       API_CONFIG.ENDPOINTS.AUTH.REFRESH,
       { refreshToken }
     );
 
-    // If refresh successful, update the stored token
-    if (response.success && response.data?.token) {
-      apiClient.setToken(response.data.token);
+    if (!backendResponse.success || !backendResponse.data) {
+      return {
+        success: false,
+        error: backendResponse.error || 'Token refresh failed',
+        timestamp: backendResponse.timestamp
+      };
     }
 
-    return response;
+    // Convert JwtResponse to LoginResponse format
+    const jwtData = backendResponse.data;
+
+    // Store the new token
+    apiClient.setToken(jwtData.accessToken);
+
+    // Get user info from token validation
+    const userInfo = await this.validateToken();
+
+    const loginResponse: LoginResponse = {
+      token: jwtData.accessToken,
+      refreshToken: jwtData.refreshToken,
+      expiresIn: jwtData.expiresIn,
+      user: userInfo.success && userInfo.data ? userInfo.data.user! : {
+        id: '',
+        username: '',
+        email: '',
+        roles: [],
+        mfaEnabled: false
+      }
+    };
+
+    return {
+      success: true,
+      data: loginResponse,
+      timestamp: backendResponse.timestamp
+    };
   }
 
   /**
@@ -137,22 +198,37 @@ export class AuthService {
     if (!token) return false;
 
     try {
-      // Decode JWT to check expiration (basic implementation)
-      const payload = JSON.parse(atob(token.split('.')[1]));
+      // Safely decode JWT to check expiration
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        console.error('Invalid JWT token format');
+        return false;
+      }
+
+      // Add padding if needed for base64 decoding
+      let payload = parts[1];
+      while (payload.length % 4) {
+        payload += '=';
+      }
+
+      const decodedPayload = JSON.parse(atob(payload));
       const currentTime = Date.now() / 1000;
-      
-      // If token expires in less than 5 minutes, refresh it
-      if (payload.exp - currentTime < 300) {
+
+      // Check if token is expired or expires in less than 5 minutes
+      if (decodedPayload.exp && decodedPayload.exp - currentTime < 300) {
         const refreshToken = localStorage.getItem('refresh_token');
         if (refreshToken) {
           const response = await this.refreshToken(refreshToken);
           return response.success;
         }
+        return false;
       }
-      
+
       return true;
     } catch (error) {
       console.error('Error checking token expiration:', error);
+      // Clear potentially corrupted token
+      this.logout();
       return false;
     }
   }

@@ -5,30 +5,32 @@
 
 // API Configuration
 export const API_CONFIG = {
-  BASE_URL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'http://localhost:8080'),
+  BASE_URL: import.meta.env.VITE_API_BASE_URL ||
+           import.meta.env.VITE_API_GATEWAY_URL ||
+           (import.meta.env.DEV ? 'http://localhost:8080' : 'http://192.168.49.2:30080'),
   ENDPOINTS: {
-    // Authentication endpoints
+    // Authentication endpoints (through API Gateway)
     AUTH: {
-      LOGIN: '/auth/login',
-      REFRESH: '/auth/refresh',
-      VALIDATE: '/auth/validate',
-      PASSWORD_ROTATE: '/auth/password-rotate'
+      LOGIN: '/api/auth/login',
+      REFRESH: '/api/auth/refresh',
+      VALIDATE: '/api/auth/validate',
+      PASSWORD_ROTATE: '/api/auth/password-rotate'
     },
-    // Admin management endpoints
+    // Admin management endpoints (through API Gateway)
     ADMIN: {
-      MFA_SETUP: '/auth/admin/mfa/setup',
-      MFA_VERIFY: '/auth/admin/mfa/verify',
-      CREATE_STEP1: '/auth/admin/admins/create/step1',
-      CREATE_STEP2: '/auth/admin/admins/create/step2',
-      CREATE_STEP3: '/auth/admin/admins/create/step3'
+      MFA_SETUP: '/api/auth/admin/mfa/setup',
+      MFA_VERIFY: '/api/auth/admin/mfa/verify',
+      CREATE_STEP1: '/api/auth/admin/admins/create/step1',
+      CREATE_STEP2: '/api/auth/admin/admins/create/step2',
+      CREATE_STEP3: '/api/auth/admin/admins/create/step3'
     },
-    // User management endpoints
+    // User management endpoints (through API Gateway)
     USERS: {
-      BASE: '/users',
-      BY_ID: (id: string) => `/users/${id}`,
-      CREATE: '/users',
-      UPDATE: (id: string) => `/users/${id}`,
-      DELETE: (id: string) => `/users/${id}`
+      BASE: '/api/users',
+      BY_ID: (id: string) => `/api/users/${id}`,
+      CREATE: '/api/users',
+      UPDATE: (id: string) => `/api/users/${id}`,
+      DELETE: (id: string) => `/api/users/${id}`
     },
     // Configuration endpoints (routed to zookeeper-service)
     CONFIG: {
@@ -54,6 +56,15 @@ export interface LoginRequest {
   otpCode?: string;
 }
 
+// Backend JwtResponse format (what we actually receive)
+export interface JwtResponse {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+  expiresIn: number;
+}
+
+// Frontend LoginResponse format (what we want to use)
 export interface LoginResponse {
   token: string;
   refreshToken: string;
@@ -109,10 +120,15 @@ export interface AdminCreationStep3Response {
 export class ApiClient {
   private baseURL: string;
   private token: string | null = null;
+  private debug: boolean = import.meta.env.VITE_DEBUG_MODE === 'true';
 
   constructor(baseURL: string = API_CONFIG.BASE_URL) {
     this.baseURL = baseURL;
     this.loadTokenFromStorage();
+
+    if (this.debug) {
+      console.log('🔧 ApiClient initialized with base URL:', this.baseURL);
+    }
   }
 
   private loadTokenFromStorage(): void {
@@ -178,14 +194,28 @@ export class ApiClient {
   }
 
   async get<T>(endpoint: string): Promise<ApiResponse<T>> {
+    const url = `${this.baseURL}${endpoint}`;
+
+    if (this.debug) {
+      console.log('🔍 GET Request:', url);
+    }
+
     try {
-      const response = await fetch(`${this.baseURL}${endpoint}`, {
+      const response = await fetch(url, {
         method: 'GET',
         headers: this.getHeaders(),
       });
 
+      if (this.debug) {
+        console.log('📥 GET Response:', response.status, response.statusText);
+      }
+
       return this.handleResponse<T>(response);
     } catch (error) {
+      if (this.debug) {
+        console.error('❌ GET Error:', error);
+      }
+
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Network error',
@@ -195,15 +225,29 @@ export class ApiClient {
   }
 
   async post<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
+    const url = `${this.baseURL}${endpoint}`;
+
+    if (this.debug) {
+      console.log('📤 POST Request:', url, data);
+    }
+
     try {
-      const response = await fetch(`${this.baseURL}${endpoint}`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: this.getHeaders(),
         body: data ? JSON.stringify(data) : undefined,
       });
 
+      if (this.debug) {
+        console.log('📥 POST Response:', response.status, response.statusText);
+      }
+
       return this.handleResponse<T>(response);
     } catch (error) {
+      if (this.debug) {
+        console.error('❌ POST Error:', error);
+      }
+
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Network error',
@@ -264,5 +308,5 @@ export class ApiClient {
   }
 }
 
-// Create singleton instance with development-friendly base URL
-export const apiClient = new ApiClient(import.meta.env.DEV ? '' : 'http://localhost:8080');
+// Create singleton instance
+export const apiClient = new ApiClient();

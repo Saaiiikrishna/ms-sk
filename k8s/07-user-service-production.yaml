@@ -81,8 +81,8 @@ spec:
           echo "Redis is ready!"
       containers:
       - name: user-service
-        image: saaiiikrishna/user-service:msd-dev-v1.1
-        imagePullPolicy: Never
+        image: saaiiikrishna/user-service:msd-dev1.0
+        imagePullPolicy: Always
         ports:
         - containerPort: 8082
           name: http

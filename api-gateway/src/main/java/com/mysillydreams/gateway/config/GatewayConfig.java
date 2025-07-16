@@ -2,6 +2,9 @@ package com.mysillydreams.gateway.config;
 
 import com.mysillydreams.gateway.filter.AuthenticationFilter;
 import com.mysillydreams.gateway.filter.TracingFilter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
+import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.cloud.gateway.route.RouteLocator;
 import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
@@ -23,6 +26,21 @@ public class GatewayConfig {
     private final AuthenticationFilter authenticationFilter;
     private final TracingFilter tracingFilter;
 
+    @Autowired
+    private RedisRateLimiter authRateLimiter;
+
+    @Autowired
+    private RedisRateLimiter apiRateLimiter;
+
+    @Autowired
+    private KeyResolver ipKeyResolver;
+
+    @Autowired
+    private KeyResolver userKeyResolver;
+
+    @Autowired
+    private KeyResolver combinedKeyResolver;
+
     public GatewayConfig(AuthenticationFilter authenticationFilter, TracingFilter tracingFilter) {
         this.authenticationFilter = authenticationFilter;
         this.tracingFilter = tracingFilter;
@@ -31,11 +49,14 @@ public class GatewayConfig {
     @Bean
     public RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
         return builder.routes()
-                // Auth Service Routes
+                // Auth Service Routes with strict rate limiting
                 .route("auth-login", r -> r
                         .path("/api/auth/login", "/api/auth/refresh", "/api/auth/validate")
                         .filters(f -> f
                                 .filter(tracingFilter)
+                                .requestRateLimiter(config -> config
+                                        .setRateLimiter(authRateLimiter)
+                                        .setKeyResolver(ipKeyResolver))
                                 .circuitBreaker(config -> config
                                         .setName("auth-service-cb")
                                         .setFallbackUri("forward:/fallback/auth"))
@@ -54,12 +75,15 @@ public class GatewayConfig {
                                         .setFallbackUri("forward:/fallback/auth")))
                         .uri("lb://auth-service"))
 
-                // User Service Routes
+                // User Service Routes with user-based rate limiting
                 .route("user-service", r -> r
                         .path("/api/users/**")
                         .filters(f -> f
                                 .filter(authenticationFilter)
                                 .filter(tracingFilter)
+                                .requestRateLimiter(config -> config
+                                        .setRateLimiter(apiRateLimiter)
+                                        .setKeyResolver(userKeyResolver))
                                 .circuitBreaker(config -> config
                                         .setName("user-service-cb")
                                         .setFallbackUri("forward:/fallback/user")))

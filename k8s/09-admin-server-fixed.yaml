@@ -56,7 +56,7 @@ spec:
           echo "Eureka Server is ready!"
       containers:
       - name: admin-server
-        image: saaiiikrishna/admin-server:msd-dev-v1.0
+        image: saaiiikrishna/admin-server:msd-dev1.0
         imagePullPolicy: Always
         ports:
         - containerPort: 8083
@@ -149,7 +149,7 @@ spec:
   ports:
   - port: 8083
     targetPort: 8083
-    nodePort: 30083
+    nodePort: 30084
     name: http
   selector:
     app: admin-server

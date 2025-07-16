@@ -3,9 +3,12 @@ package com.mysillydreams.auth.controller;
 import com.mysillydreams.auth.controller.dto.JwtResponse;
 import com.mysillydreams.auth.controller.dto.LoginRequest;
 import com.mysillydreams.auth.controller.dto.TokenRefreshRequest;
+import com.mysillydreams.auth.domain.RefreshToken;
+import com.mysillydreams.auth.repository.RefreshTokenRepository;
 import com.mysillydreams.auth.service.AuthService; // Added
 import com.mysillydreams.auth.service.HybridAuthenticationService;
 import com.mysillydreams.auth.service.PasswordRotationService;
+import com.mysillydreams.auth.service.RefreshTokenService;
 import com.mysillydreams.auth.util.JwtTokenProvider;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,13 +29,23 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 // AuthenticationManager no longer directly used here
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.Map;
 import java.util.UUID;
 
@@ -49,16 +62,22 @@ public class AuthController {
     private final PasswordRotationService passwordRotationService;
     private final AuthService authService; // Added AuthService
     private final HybridAuthenticationService hybridAuthenticationService; // Added Hybrid Authentication
+    private final RefreshTokenService refreshTokenService; // Added RefreshTokenService
+    private final RefreshTokenRepository refreshTokenRepository; // Added RefreshTokenRepository
 
     @Autowired
     public AuthController(AuthService authService, // Injected AuthService
                           JwtTokenProvider jwtTokenProvider,
                           PasswordRotationService passwordRotationService,
-                          HybridAuthenticationService hybridAuthenticationService) {
+                          HybridAuthenticationService hybridAuthenticationService,
+                          RefreshTokenService refreshTokenService,
+                          RefreshTokenRepository refreshTokenRepository) {
         this.authService = authService;
         this.jwtTokenProvider = jwtTokenProvider;
         this.passwordRotationService = passwordRotationService;
         this.hybridAuthenticationService = hybridAuthenticationService;
+        this.refreshTokenService = refreshTokenService;
+        this.refreshTokenRepository = refreshTokenRepository;
     }
 
     @Operation(summary = "User Login", description = "Authenticates a user with username and password against Keycloak and returns a service-specific JWT. For admins with MFA enabled, an OTP must also be provided.")
@@ -151,6 +170,183 @@ public class AuthController {
         } catch (Exception e) {
             logger.error("Unexpected error during token validation: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("status", "invalid", "error", "Token validation failed"));
+        }
+    }
+
+    @Schema(name = "TokenRefreshRequest", description = "Request payload for refreshing JWT token")
+    private static class TokenRefreshRequest {
+        @NotBlank(message = "Refresh token cannot be blank")
+        @Schema(description = "The refresh token", example = "eyJhbGciOiJIUzUxMiJ9...", requiredMode = Schema.RequiredMode.REQUIRED)
+        public String refreshToken;
+
+        public String getRefreshToken() {
+            return refreshToken;
+        }
+
+        public void setRefreshToken(String refreshToken) {
+            this.refreshToken = refreshToken;
+        }
+    }
+
+    @Operation(summary = "Refresh JWT token",
+               description = "Refreshes an expired or soon-to-expire JWT token using a valid refresh token.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Token refreshed successfully"),
+            @ApiResponse(responseCode = "401", description = "Invalid or expired refresh token"),
+            @ApiResponse(responseCode = "400", description = "Invalid request payload"),
+            @ApiResponse(responseCode = "500", description = "Internal server error during token refresh")
+    })
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refreshToken(
+            @Parameter(description = "Refresh token request", required = true)
+            @Valid @RequestBody TokenRefreshRequest request,
+            HttpServletRequest httpRequest) {
+
+        try {
+            logger.info("Token refresh request received");
+
+            // Validate refresh token using the secure token service
+            Optional<RefreshToken> refreshTokenOpt = refreshTokenService.validateRefreshToken(request.refreshToken);
+
+            if (refreshTokenOpt.isEmpty()) {
+                logger.warn("Invalid or expired refresh token provided");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Invalid or expired refresh token"));
+            }
+
+            RefreshToken refreshToken = refreshTokenOpt.get();
+
+            // Generate new access token
+            Collection<GrantedAuthority> authorities = List.of(new SimpleGrantedAuthority("ROLE_USER")); // TODO: Get actual roles
+            String newAccessToken = jwtTokenProvider.generateTokenForUser(refreshToken.getUsername(), authorities);
+            Long expiresIn = jwtTokenProvider.getExpiryDateFromToken(newAccessToken) - System.currentTimeMillis();
+
+            // Generate new refresh token and revoke the old one
+            refreshTokenService.revokeRefreshToken(request.refreshToken);
+            RefreshToken newRefreshToken = refreshTokenService.generateRefreshToken(
+                refreshToken.getUsername(),
+                refreshToken.getUserId(),
+                httpRequest
+            );
+
+            JwtResponse response = new JwtResponse(newAccessToken, expiresIn);
+            response.setRefreshToken(newRefreshToken.getToken());
+
+            logger.info("Token refreshed successfully for user: {}", refreshToken.getUsername());
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            logger.error("Error during token refresh: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Token refresh failed"));
+        }
+    }
+
+    /**
+     * Get user's active sessions
+     */
+    @GetMapping("/sessions")
+    @Operation(summary = "Get user sessions", description = "Retrieve all active sessions for the current user")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<?> getUserSessions(HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Missing or invalid Authorization header"));
+            }
+
+            String token = authHeader.substring(7);
+            String username = jwtTokenProvider.getUsernameFromToken(token);
+
+            List<RefreshToken> userSessions = refreshTokenService.getUserValidTokens(username);
+
+            List<Map<String, Object>> sessionData = userSessions.stream()
+                .map(session -> {
+                    Map<String, Object> sessionInfo = new HashMap<>();
+                    sessionInfo.put("id", session.getId().toString());
+                    sessionInfo.put("issuedAt", session.getIssuedAt().toString());
+                    sessionInfo.put("expiresAt", session.getExpiresAt().toString());
+                    sessionInfo.put("ipAddress", session.getIpAddress());
+                    sessionInfo.put("userAgent", session.getUserAgent());
+                    sessionInfo.put("isCurrent", false); // TODO: Determine current session
+                    sessionInfo.put("isValid", session.isValid());
+                    return sessionInfo;
+                })
+                .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of("sessions", sessionData));
+
+        } catch (Exception e) {
+            logger.error("Error retrieving user sessions: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to retrieve sessions"));
+        }
+    }
+
+    /**
+     * Revoke a specific session
+     */
+    @PostMapping("/sessions/{sessionId}/revoke")
+    @Operation(summary = "Revoke session", description = "Revoke a specific user session")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<?> revokeSession(
+            @PathVariable String sessionId,
+            HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Missing or invalid Authorization header"));
+            }
+
+            String token = authHeader.substring(7);
+            String username = jwtTokenProvider.getUsernameFromToken(token);
+
+            // Find the session and verify it belongs to the user
+            Optional<RefreshToken> sessionOpt = refreshTokenRepository.findById(UUID.fromString(sessionId));
+            if (sessionOpt.isEmpty() || !sessionOpt.get().getUsername().equals(username)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Session not found"));
+            }
+
+            refreshTokenService.revokeRefreshToken(sessionOpt.get().getToken());
+
+            return ResponseEntity.ok(Map.of("message", "Session revoked successfully"));
+
+        } catch (Exception e) {
+            logger.error("Error revoking session: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to revoke session"));
+        }
+    }
+
+    /**
+     * Revoke all other sessions (except current)
+     */
+    @PostMapping("/sessions/revoke-all-others")
+    @Operation(summary = "Revoke all other sessions", description = "Revoke all user sessions except the current one")
+    @SecurityRequirement(name = "bearerAuth")
+    public ResponseEntity<?> revokeAllOtherSessions(HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Missing or invalid Authorization header"));
+            }
+
+            String token = authHeader.substring(7);
+            String username = jwtTokenProvider.getUsernameFromToken(token);
+
+            // TODO: Implement logic to keep current session and revoke others
+            refreshTokenService.revokeAllUserTokens(username);
+
+            return ResponseEntity.ok(Map.of("message", "All other sessions revoked successfully"));
+
+        } catch (Exception e) {
+            logger.error("Error revoking other sessions: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to revoke other sessions"));
         }
     }
 

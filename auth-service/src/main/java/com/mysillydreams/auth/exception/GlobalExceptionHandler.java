@@ -1,5 +1,8 @@
 package com.mysillydreams.auth.exception;
 
+import com.mysillydreams.auth.exception.MfaAuthenticationRequiredException;
+import io.jsonwebtoken.JwtException;
+import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -7,14 +10,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.server.ResponseStatusException;
 
 import jakarta.validation.ConstraintViolationException;
 import jakarta.ws.rs.NotFoundException; // JAX-RS NotFoundException, as thrown by Keycloak admin client or our service
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -25,7 +31,42 @@ public class GlobalExceptionHandler {
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private static final String ERROR_KEY = "error";
-    private static final String MESSAGE_KEY = "message"; // For more detailed messages if needed, use with caution
+    private static final String MESSAGE_KEY = "message";
+
+    /**
+     * Enhanced error response structure
+     */
+    public static class ErrorResponse {
+        private String error;
+        private String message;
+        private int status;
+        private LocalDateTime timestamp;
+        private String path;
+        private Map<String, Object> details;
+
+        public ErrorResponse(String error, String message, int status, String path) {
+            this.error = error;
+            this.message = message;
+            this.status = status;
+            this.timestamp = LocalDateTime.now();
+            this.path = path;
+            this.details = new HashMap<>();
+        }
+
+        // Getters and setters
+        public String getError() { return error; }
+        public void setError(String error) { this.error = error; }
+        public String getMessage() { return message; }
+        public void setMessage(String message) { this.message = message; }
+        public int getStatus() { return status; }
+        public void setStatus(int status) { this.status = status; }
+        public LocalDateTime getTimestamp() { return timestamp; }
+        public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public Map<String, Object> getDetails() { return details; }
+        public void setDetails(Map<String, Object> details) { this.details = details; }
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex, WebRequest request) {
@@ -121,12 +162,90 @@ public class GlobalExceptionHandler {
     // }
 
 
+    /**
+     * Handle MFA authentication required
+     */
+    @ExceptionHandler(MfaAuthenticationRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleMfaAuthenticationRequiredException(
+            MfaAuthenticationRequiredException ex, WebRequest request) {
+        logger.info("MFA authentication required: {}", ex.getMessage());
+
+        ErrorResponse error = new ErrorResponse(
+            "MFA_REQUIRED",
+            ex.getMessage(),
+            HttpStatus.UNAUTHORIZED.value(),
+            request.getDescription(false).replace("uri=", "")
+        );
+        error.getDetails().put("mfaRequired", true);
+
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+    }
+
+    /**
+     * Handle JWT exceptions
+     */
+    @ExceptionHandler(JwtException.class)
+    public ResponseEntity<ErrorResponse> handleJwtException(
+            JwtException ex, WebRequest request) {
+        logger.warn("JWT error: {}", ex.getMessage());
+
+        ErrorResponse error = new ErrorResponse(
+            "INVALID_TOKEN",
+            "Invalid or expired token.",
+            HttpStatus.UNAUTHORIZED.value(),
+            request.getDescription(false).replace("uri=", "")
+        );
+
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+    }
+
+    /**
+     * Handle entity not found exceptions
+     */
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleEntityNotFoundException(
+            EntityNotFoundException ex, WebRequest request) {
+        logger.warn("Entity not found: {}", ex.getMessage());
+
+        ErrorResponse error = new ErrorResponse(
+            "ENTITY_NOT_FOUND",
+            ex.getMessage(),
+            HttpStatus.NOT_FOUND.value(),
+            request.getDescription(false).replace("uri=", "")
+        );
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
+    /**
+     * Handle response status exceptions
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatusException(
+            ResponseStatusException ex, WebRequest request) {
+        logger.warn("Response status exception: {}", ex.getMessage());
+
+        ErrorResponse error = new ErrorResponse(
+            ex.getStatusCode().toString(),
+            ex.getReason() != null ? ex.getReason() : "An error occurred",
+            ex.getStatusCode().value(),
+            request.getDescription(false).replace("uri=", "")
+        );
+
+        return ResponseEntity.status(ex.getStatusCode()).body(error);
+    }
+
     @ExceptionHandler(Exception.class) // Generic fallback for any other exceptions
-    public ResponseEntity<Object> handleAllOtherExceptions(Exception ex, WebRequest request) {
+    public ResponseEntity<ErrorResponse> handleAllOtherExceptions(Exception ex, WebRequest request) {
         logger.error("Unhandled exception for request {}: {}", request.getDescription(false), ex.getMessage(), ex);
-        Map<String, Object> body = new HashMap<>();
-        body.put(ERROR_KEY, "An unexpected internal error occurred. Please try again later.");
-        // In dev/test, you might want to return more details: body.put("details", ex.getMessage());
-        return new ResponseEntity<>(body, HttpStatus.INTERNAL_SERVER_ERROR);
+
+        ErrorResponse error = new ErrorResponse(
+            "INTERNAL_SERVER_ERROR",
+            "An unexpected error occurred. Please try again later.",
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            request.getDescription(false).replace("uri=", "")
+        );
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
     }
 }

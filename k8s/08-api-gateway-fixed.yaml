@@ -47,8 +47,7 @@ spec:
           echo "ZooKeeper is ready!"
       containers:
       - name: api-gateway
-        image: api-gateway:1.4
-        imagePullPolicy: Never
+        image: saaiiikrishna/api-gateway:msd-dev1.0
         imagePullPolicy: Always
         ports:
         - containerPort: 8080

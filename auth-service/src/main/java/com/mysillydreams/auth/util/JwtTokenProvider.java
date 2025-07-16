@@ -5,6 +5,7 @@ import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SignatureException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
+import java.util.List;
 import java.util.stream.Collectors;
 
 @Component
@@ -25,26 +27,33 @@ public class JwtTokenProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(JwtTokenProvider.class);
 
-    @Value("${jwt.secret}")
-    private String jwtSecretString;
-
     @Value("${jwt.expiration-ms}")
     private long jwtExpirationInMs;
 
-    private SecretKey jwtSecretKey;
+    private final SecretKey jwtSecretKey;
+    private final SecretKey jwtRefreshSecretKey;
     private static final String AUTHORITIES_KEY = "roles";
 
-    @PostConstruct
-    public void init() {
-        // Ensure the secret key is strong enough for HS512
-        if (jwtSecretString == null || jwtSecretString.length() < 64) { // HS512 needs a key of at least 512 bits (64 bytes/chars for a safe string)
-            logger.warn("JWT secret is weak or not configured. Using a default, insecure key. THIS IS NOT SAFE FOR PRODUCTION.");
-            // This is a fallback for local development if not set, but should be overridden.
-            // In a real scenario, you might throw an exception or ensure it's always set via config.
-            this.jwtSecretKey = Keys.secretKeyFor(SignatureAlgorithm.HS512); // Generates a secure key
+    // Constructor injection for Vault-based secret keys
+    public JwtTokenProvider(
+            @Qualifier("jwtSecretKey") SecretKey jwtSecretKey,
+            @Qualifier("jwtRefreshSecretKey") SecretKey jwtRefreshSecretKey) {
+        this.jwtSecretKey = jwtSecretKey;
+        this.jwtRefreshSecretKey = jwtRefreshSecretKey;
+        logger.info("JwtTokenProvider initialized with Vault-based secret keys");
+    }
+
+    // Fallback constructor for environments without Vault
+    public JwtTokenProvider(@Value("${jwt.secret:}") String jwtSecretString) {
+        if (jwtSecretString == null || jwtSecretString.length() < 64) {
+            logger.warn("JWT secret is weak or not configured. Using a generated key. THIS IS NOT SAFE FOR PRODUCTION.");
+            this.jwtSecretKey = Keys.secretKeyFor(SignatureAlgorithm.HS512);
+            this.jwtRefreshSecretKey = Keys.secretKeyFor(SignatureAlgorithm.HS512);
         } else {
             this.jwtSecretKey = Keys.hmacShaKeyFor(jwtSecretString.getBytes(StandardCharsets.UTF_8));
+            this.jwtRefreshSecretKey = Keys.hmacShaKeyFor((jwtSecretString + "_refresh").getBytes(StandardCharsets.UTF_8));
         }
+        logger.info("JwtTokenProvider initialized with fallback configuration");
     }
 
     public String generateToken(Authentication authentication) {
@@ -70,6 +79,68 @@ public class JwtTokenProvider {
                 .setExpiration(expiryDate)
                 .signWith(jwtSecretKey, SignatureAlgorithm.HS512)
                 .compact();
+    }
+
+    /**
+     * Generate refresh token with longer expiration
+     */
+    public String generateRefreshToken(String username, Collection<? extends GrantedAuthority> authorities) {
+        String roles = authorities.stream()
+                .map(GrantedAuthority::getAuthority)
+                .collect(Collectors.joining(","));
+
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + (jwtExpirationInMs * 7)); // 7 times longer than access token
+
+        logger.debug("Generating refresh token for user: {}", username);
+
+        return Jwts.builder()
+                .setSubject(username)
+                .claim(AUTHORITIES_KEY, roles)
+                .claim("token_type", "refresh")
+                .setIssuedAt(now)
+                .setExpiration(expiryDate)
+                .signWith(jwtRefreshSecretKey, SignatureAlgorithm.HS512)
+                .compact();
+    }
+
+    /**
+     * Validate refresh token using refresh secret key
+     */
+    public boolean validateRefreshToken(String token) {
+        try {
+            Jwts.parser()
+                    .setSigningKey(jwtRefreshSecretKey)
+                    .build()
+                    .parseClaimsJws(token);
+            return true;
+        } catch (JwtException | IllegalArgumentException e) {
+            logger.debug("Refresh token validation failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get authentication from refresh token
+     */
+    public Authentication getAuthenticationFromRefreshToken(String token) {
+        Claims claims = Jwts.parser()
+                .setSigningKey(jwtRefreshSecretKey)
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
+
+        String username = claims.getSubject();
+        String authoritiesStr = claims.get(AUTHORITIES_KEY, String.class);
+
+        Collection<? extends GrantedAuthority> authorities = authoritiesStr != null ?
+                Arrays.stream(authoritiesStr.split(","))
+                        .map(SimpleGrantedAuthority::new)
+                        .collect(Collectors.toList()) :
+                List.of();
+
+        User principal = new User(username, "", authorities);
+        return new UsernamePasswordAuthenticationToken(principal, "", authorities);
     }
 
     public Authentication getAuthentication(String token) {
